@@ -21,7 +21,6 @@ def generate_scenario_data(base_params: TurboParameters) -> tuple[pd.DataFrame, 
         calc = DeterministicTurboCalculator(p_scenario)
         res = calc.calculate_all()
         
-        # Il Knock-Out è assoluto. Nessuna pietà.
         is_ko = scenario_spot >= barriera
         
         if is_ko:
