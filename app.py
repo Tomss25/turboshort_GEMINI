@@ -90,13 +90,13 @@ ui_spread = st.sidebar.number_input("Bid-Ask Spread (%)", value=0.5, step=0.1) /
 ui_comm = st.sidebar.number_input("Commissioni (%)", value=0.1, step=0.05) / 100
 ui_div = st.sidebar.number_input("Dividend Yield (%)", value=1.5, step=0.1) / 100
 
-st.title("🏦 Dashboard Copertura Istituzionale (v6.0)")
+st.title("🏦 Dashboard Copertura Istituzionale (v6.1)")
 is_real_ratio = st.toggle("🛡️ **Hedge Ratio Netto (Risk Manager)**", value=True)
 
 tab1, tab2, tab3, tab4 = st.tabs(["🎯 Setup & Matrice", "📈 Backtest Storico", "🔍 Database Live", "🤖 Advisor Strategico"])
 
 # ======================================================================
-# TAB 1: SETUP & RISULTATI (EXCEL STYLE)
+# TAB 1: SETUP & RISULTATI (EXCEL STYLE + COMMENTI)
 # ======================================================================
 with tab1:
     with st.form("input_form"):
@@ -114,7 +114,7 @@ with tab1:
             st.markdown("### 📉 Mercato")
             v_iniziale = st.number_input("Spot", value=6670.75, step=0.01)
             v_ipotetico = st.number_input("Target", value=6000.0, step=0.01)
-            giorni = st.number_input("Giorni", value=60, step=1)
+            giorni = st.number_input("Giorni Hedging", value=60, step=1)
         with col3:
             st.markdown("### 💼 Portafoglio")
             ptf = st.number_input("Capitale Ptf (€)", value=200000.0, step=1000.0)
@@ -174,6 +174,19 @@ with tab1:
             perf = res['percentuale']*100
             st.markdown(f"<div style='background-color:{'#E8F5E9' if perf>=0 else '#FFEBEE'}; text-align:center; padding:15px; border:2px solid {'#2E7D32' if perf>=0 else '#C62828'};'><h3>{perf:+.2f}% Perf. Netta</h3></div>", unsafe_allow_html=True)
 
+        # --- SEZIONE COMMENTI SUI RISULTATI ---
+        st.markdown("### 📝 Analisi del Risk Manager")
+        h_ratio = res['hedge_ratio_reale'] * 100
+        if h_ratio > 98:
+            st.success(f"**Copertura Ottimale:** Il sistema ha neutralizzato il {h_ratio:.1f}% del rischio. La performance netta riflette l'efficacia della protezione al netto dei costi di transazione.")
+        elif h_ratio > 80:
+            st.warning(f"**Sotto-copertura Parziale:** Stai coprendo il {h_ratio:.1f}% del drawdown stimato. Il portafoglio rimane parzialmente esposto a movimenti direzionali.")
+        else:
+            st.error(f"**Copertura Insufficiente:** L'Hedge Ratio del {h_ratio:.1f}% è troppo basso per garantire protezione strutturale. Considera di aumentare il numero di certificati o cercare una leva maggiore.")
+
+        if perf < -1:
+             st.info(f"**Nota sui Costi:** Il trascinamento negativo del {perf:.2f}% è dovuto principalmente al Bid-Ask spread e alle commissioni. In scenari di bassa volatilità, questo rappresenta il 'premio assicurativo' pagato al mercato.")
+
         # Matrice Sensitività
         st.divider()
         st.markdown("### 🌡️ Matrice di Sensitività")
@@ -189,9 +202,16 @@ with tab1:
             matrix.append(row)
         df_sens = pd.DataFrame(matrix, columns=[f"{v*100:+.0f}%" for v in var_list], index=[f"T+{t}gg" for t in t_steps])
         st.dataframe(df_sens.style.format("{:.3f}€").background_gradient(cmap='RdYlGn', axis=None, vmin=0.0), use_container_width=True)
+        
+        st.divider()
+        g1, g2 = st.columns(2)
+        with g1:
+            df_s, b_l = generate_scenario_data(params)
+            st.plotly_chart(plot_payoff_profile(df_s, params.valore_iniziale, b_l), use_container_width=True)
+        with g2: st.plotly_chart(plot_pl_waterfall(res), use_container_width=True)
 
 # ======================================================================
-# TAB 2: BACKTEST (FIXED KEYERROR)
+# TAB 2: BACKTEST
 # ======================================================================
 with tab2:
     st.markdown("### 🕰️ Analisi Storica e Report")
@@ -205,7 +225,6 @@ with tab2:
         if st.button("🚀 Avvia Backtest"):
             df_bt, msg, diag = run_historical_backtest(t_ptf, t_idx, t_fx, datetime.date(2023,1,1), datetime.date.today(), st.session_state['barriera_calcolata'])
             if df_bt is not None:
-                # Protezione KeyError: Assicuro che bg_color e color esistano
                 bg = diag.get('bg_color', '#f8f9fa')
                 tc = diag.get('color', '#1A365D')
                 st.markdown(f"""<div style="background-color: {bg}; border-left: 5px solid {tc}; padding: 15px; border-radius: 5px;">
@@ -236,7 +255,7 @@ with tab3:
             st.success(f"✅ ISIN {row['ISIN']} caricato."); st.button("Aggiorna ora")
 
 # ======================================================================
-# TAB 4: ADVISOR (RIPRISTINATA)
+# TAB 4: ADVISOR
 # ======================================================================
 with tab4:
     st.markdown("### 🤖 Advisor Strategico: Match Portafoglio")
