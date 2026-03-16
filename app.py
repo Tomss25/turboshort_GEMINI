@@ -124,7 +124,7 @@ with st.sidebar.expander("💰 Costi di Transazione", expanded=True):
 with st.sidebar.expander("📊 Dividend Yield", expanded=True):
     ui_div = st.number_input("Rendimento Dividendi (%)", min_value=0.0, max_value=10.0, value=1.5, step=0.1) / 100
 
-st.title("🏦 Dashboard Copertura Istituzionale (v4.5)")
+st.title("🏦 Dashboard Copertura Istituzionale (v4.1)")
 
 st.markdown('<div class="risk-toggle">', unsafe_allow_html=True)
 is_real_ratio = st.toggle("🛡️ **Modalità Risk Manager (Hedge Ratio Netto dei Costi)**", value=True)
@@ -244,6 +244,7 @@ with tab1:
             st.markdown("<div style='background-color: #2c5282; padding: 12px; border-radius: 5px; text-align: center; margin-bottom: 15px;'><h4 style='margin: 0; color: white; font-size: 16px;'>PORTAFOGLIO DA COPRIRE</h4></div>", unsafe_allow_html=True)
             st.markdown(f"<div style='text-align: right; font-size: 24px; font-weight: bold; color: #2c5282; margin-bottom: 20px; padding: 10px; background-color: #F8F9FA; border-radius: 5px;'>{params.portafoglio:,.2f} €</div>", unsafe_allow_html=True)
             
+            # --- TABELLA DETTAGLIATA (RIPRISTINATA COME RICHIESTO) ---
             st.markdown(f"""
             <table style='width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 14px;'>
             <tr style='background-color: #F8F9FA;'><td style='padding: 8px; border: 1px solid #dee2e6;'><strong>N. Turbo Short</strong></td><td style='padding: 8px; border: 1px solid #dee2e6; text-align: right;'>{res['n_turbo']:,.2f}</td><td rowspan='2' style='padding: 8px; border: 1px solid #dee2e6; text-align: center; vertical-align: middle; background-color: #E3F2FD; font-weight: bold;'>TOTALE CON<br/>COPERTURA</td></tr>
@@ -308,7 +309,7 @@ with tab1:
             row = []
             for s in spot_levels:
                 if s >= res['barriera']:
-                    row.append(0.0) 
+                    row.append(0.0) # Knock out
                 else:
                     intrinsic = max(0, (params.strike - s) / params.cambio * params.multiplo)
                     decay_per_day = res['premio'] / params.giorni if params.giorni > 0 else 0
@@ -328,70 +329,30 @@ with tab1:
             st.plotly_chart(plot_pl_waterfall(st.session_state['res']), use_container_width=True)
 
 # ======================================================================
-# TAB 2: BACKTEST STORICO E GRAFICI
+# TAB 2: BACKTEST STORICO
 # ======================================================================
 with tab2:
-    st.markdown("### 🕰️ Macchina del Tempo: Backtest Storico")
-    st.markdown("Verifica come la struttura si sarebbe comportata nel passato. Un modello che non sopravvive alla storia è un modello morto.")
-    
+    st.markdown("### Analisi Storica e Rischio FX")
     if 'barriera_calcolata' not in st.session_state:
-        st.warning("⚠️ Calcola prima la struttura base nel Tab 'Setup & Matrice di Sensitività'.")
+        st.warning("Per favore, calcola prima la struttura base nel Tab 'Setup Copertura'.")
     else:
-        with st.expander("⚙️ Parametri di Simulazione", expanded=True):
-            b_col1, b_col2, b_col3, b_col4, b_col5 = st.columns(5)
-            ticker_ptf = b_col1.text_input("Ticker Ptf", value="SPY", help="L'asset da proteggere")
-            ticker_idx = b_col2.text_input("Ticker Indice", value="^GSPC", help="Sottostante del Turbo")
-            ticker_fx = b_col3.text_input("Rischio Cambio", value="", help="Es. EURUSD=X (Vuoto se assente)")
-            start_date = b_col4.date_input("Inizio", value=datetime.date(2023, 1, 1))
-            end_date = b_col5.date_input("Fine", value=datetime.date.today())
+        b_col1, b_col2, b_col3, b_col4, b_col5 = st.columns(5)
+        ticker_ptf = b_col1.text_input("Ticker Ptf", value="SPY")
+        ticker_idx = b_col2.text_input("Ticker Indice", value="^GSPC")
+        ticker_fx = b_col3.text_input("Rischio Cambio (es. EURUSD=X)", value="")
+        start_date = b_col4.date_input("Inizio", value=datetime.date(2023, 1, 1))
+        end_date = b_col5.date_input("Fine", value=datetime.date.today())
         
-        if st.button("🚀 Esegui Stress Test Storico", type="primary"):
-            with st.spinner("Allineamento serie storiche, calcolo FX e simulazione barriere in corso..."):
+        if st.button("🚀 Avvia Backtest Avanzato", type="primary"):
+            with st.spinner("Calcolo storico..."):
                 df_bt, msg, diagnosis = run_historical_backtest(ticker_ptf, ticker_idx, ticker_fx, start_date, end_date, st.session_state['barriera_calcolata'])
-                
                 if df_bt is not None:
-                    # VERDETTO IN ALTO
-                    st.divider()
-                    st.markdown("### ⚖️ Verdetto del Risk Manager")
-                    if diagnosis['color'] == 'error':
-                        st.error(f"**🚨 {diagnosis['title']}**\n\n{diagnosis['body']}\n\n**Azione Richiesta:** {diagnosis['action']}")
-                    elif diagnosis['color'] == 'warning':
-                        st.warning(f"**⚠️ {diagnosis['title']}**\n\n{diagnosis['body']}\n\n**Azione Richiesta:** {diagnosis['action']}")
-                    else:
-                        st.success(f"**✅ {diagnosis['title']}**\n\n{diagnosis['body']}\n\n**Azione Richiesta:** {diagnosis['action']}")
-                    
-                    # GRAFICI DINAMICI
-                    st.markdown("### 📈 Dinamica Storica")
-                    chart_col1, chart_col2 = st.columns(2)
-                    
-                    with chart_col1:
-                        st.markdown(f"**Andamento Asset: {ticker_ptf}**")
-                        chart_cols = ['Ptf_Close']
-                        if ticker_fx and 'Ptf_Base_Currency' in df_bt.columns: 
-                            chart_cols.append('Ptf_Base_Currency')
-                        st.line_chart(df_bt.set_index('Date')[chart_cols])
-                            
-                    with chart_col2:
-                        if 'Drawdown' in df_bt.columns:
-                            st.markdown(f"**Drawdown Indice: {ticker_idx} (%)**")
-                            st.area_chart(df_bt.set_index('Date')['Drawdown'])
-                        elif 'Beta_60d' in df_bt.columns:
-                            st.markdown("**Evoluzione Beta (60gg)**")
-                            st.line_chart(df_bt.set_index('Date')['Beta_60d'])
-                    
-                    # DATI E PDF NASCOSTI PER PULIZIA VISIVA
-                    with st.expander("🔍 Esplora Dati Grezzi e Scarica Report", expanded=False):
-                        pdf_bytes = generate_pdf_report(df_bt, ticker_ptf, ticker_idx, ticker_fx, st.session_state['barriera_calcolata'], diagnosis)
-                        st.download_button("📄 Scarica Report Risk Management (PDF)", data=pdf_bytes, file_name=f"Hedge_Report_{ticker_ptf}.pdf", mime="application/pdf")
-                        
-                        cols_to_show = ['Date', 'Ptf_Close']
-                        if ticker_fx and 'Ptf_Base_Currency' in df_bt.columns: cols_to_show.append('Ptf_Base_Currency')
-                        for c in ['Idx_High', 'Drawdown', 'Hedge_Signal', 'Knock_Out_Event', 'Beta_60d']:
-                            if c in df_bt.columns: cols_to_show.append(c)
-                        
-                        st.dataframe(df_bt[cols_to_show].sort_values('Date', ascending=False).head(50), use_container_width=True)
-                else:
-                    st.error(f"Errore durante il backtest: {msg}")
+                    st.success("Completato.")
+                    pdf_bytes = generate_pdf_report(df_bt, ticker_ptf, ticker_idx, ticker_fx, st.session_state['barriera_calcolata'], diagnosis)
+                    st.download_button("📄 Scarica PDF", data=pdf_bytes, file_name=f"Hedge_{ticker_ptf}.pdf", mime="application/pdf")
+                    if diagnosis['color'] == 'error': st.error(f"**{diagnosis['title']}**\n\n{diagnosis['body']}\n\n**{diagnosis['action']}**")
+                    else: st.success(f"**{diagnosis['title']}**\n\n{diagnosis['body']}\n\n**{diagnosis['action']}**")
+                else: st.error(f"Errore: {msg}")
 
 # ======================================================================
 # TAB 3: DATABASE LIVE BNP PARIBAS
