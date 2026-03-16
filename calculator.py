@@ -52,7 +52,7 @@ class DeterministicTurboCalculator:
 
         pl_portafoglio = valore_ptf_simulato - self.p.portafoglio
         pl_turbo_netto = valore_copertura - capitale
-        pl_turbo_lordo = valore_copertura # L'illusione commerciale
+        pl_turbo_lordo = valore_copertura
         
         hedge_ratio_reale = self.safe_divide(pl_turbo_netto, abs(pl_portafoglio)) if pl_portafoglio < 0 else 0.0
         hedge_ratio_commerciale = self.safe_divide(pl_turbo_lordo, abs(pl_portafoglio)) if pl_portafoglio < 0 else 0.0
