@@ -11,7 +11,7 @@ if 'selected_cert' not in st.session_state:
 
 st.set_page_config(page_title="Turbo Hedge Quant", layout="wide", page_icon="🏦")
 
-# --- INIEZIONE CSS CORPORATE AVANZATA ---
+# --- INIEZIONE CSS CORPORATE AVANZATA & FIX NAVIGAZIONE ---
 st.markdown("""
 <style>
     /* Sfondo generale e font */
@@ -44,6 +44,14 @@ st.markdown("""
     [data-testid="stSidebar"] [data-testid="stExpander"] p, [data-testid="stSidebar"] [data-testid="stExpander"] label, [data-testid="stSidebar"] [data-testid="stExpander"] div { color: #1A365D !important; font-weight: 500; }
     [data-testid="stSidebar"] [data-testid="stExpander"] input { background-color: #F4F7F6 !important; color: #000000 !important; border: 1px solid #CBD5E0 !important; }
     [data-testid="stSidebar"] [data-testid="stExpander"] svg { stroke: #1A365D !important; }
+
+    /* --- FIX: Rende visibile il menu delle pagine nativo --- */
+    [data-testid="stSidebarNav"] span, 
+    [data-testid="stSidebarNav"] div {
+        color: #FFFFFF !important;
+        font-weight: 600;
+    }
+    [data-testid="stSidebarNav"] svg { stroke: #FFFFFF !important; fill: #FFFFFF !important; }
 </style>
 """, unsafe_allow_html=True)
 
