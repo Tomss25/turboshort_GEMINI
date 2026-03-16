@@ -5,7 +5,6 @@ from stress_test import run_stress_test
 from backtest import run_historical_backtest, generate_pdf_report
 import datetime
 
-# --- INIEZIONE CSS CORPORATE ---
 st.set_page_config(page_title="Turbo Hedge Quant", layout="wide", page_icon="🏦")
 st.markdown("""
 <style>
@@ -22,7 +21,6 @@ st.markdown("""
 
 st.title("🏦 Dashboard Copertura Istituzionale (v2.0)")
 
-# --- IL TOGGLE DI REALTÀ (Fuori dal form per reattività immediata) ---
 st.markdown('<div class="risk-toggle">', unsafe_allow_html=True)
 is_real_ratio = st.toggle(
     "🛡️ **Modalità Risk Manager (Hedge Ratio Netto)**", 
@@ -65,10 +63,9 @@ with tab1:
         res = calc.calculate_all()
         
         st.session_state['barriera_calcolata'] = res['barriera']
-        st.session_state['params'] = params # Salviamo per il ricalcolo passivo
+        st.session_state['params'] = params
         st.session_state['res'] = res
 
-    # Se i risultati esistono in memoria (mostra le metriche che reagiscono al toggle)
     if 'res' in st.session_state:
         res = st.session_state['res']
         
@@ -84,7 +81,6 @@ with tab1:
         r1, r2, r3, r4 = st.columns(4)
         r1.metric("P&L Ptf Nudo", f"€ {res['pl_portafoglio']:,.2f}")
         
-        # Logica reattiva basata sul Toggle
         if is_real_ratio:
             r2.metric("P&L Copertura (Netto)", f"€ {res['pl_turbo_netto']:,.2f}")
             hr_val = res['hedge_ratio_reale'] * 100
@@ -137,10 +133,8 @@ with tab2:
                 if df_bt is not None:
                     st.success("Analisi completata.")
                     
-                    # Genera PDF in memoria
                     pdf_bytes = generate_pdf_report(df_bt, ticker_ptf, ticker_idx, st.session_state['barriera_calcolata'])
                     
-                    # Bottone per scaricare il PDF
                     st.download_button(
                         label="📄 Scarica Report Risk Management (PDF)",
                         data=pdf_bytes,
