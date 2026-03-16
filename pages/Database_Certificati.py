@@ -4,6 +4,7 @@ import requests
 
 st.set_page_config(page_title="Database Live", layout="wide", page_icon="⚡")
 
+# --- INIEZIONE CSS CORPORATE (Stile BNP Paribas) & FIX NAVIGAZIONE ---
 st.markdown("""
 <style>
     .stApp { background-color: #F8F9FA; }
@@ -11,12 +12,24 @@ st.markdown("""
     .filter-container { background-color: #1A365D; padding: 20px; border-radius: 8px; margin-bottom: 20px; }
     .filter-container label { color: #FFFFFF !important; font-weight: bold; }
     div[data-testid="stDataFrame"] { border: 1px solid #dee2e6; border-radius: 5px; }
+
+    /* STYLING DELLA SIDEBAR */
+    [data-testid="stSidebar"] { background-color: #1A365D !important; }
+    
+    /* --- FIX: Rende visibile il menu delle pagine nativo --- */
+    [data-testid="stSidebarNav"] span, 
+    [data-testid="stSidebarNav"] div {
+        color: #FFFFFF !important;
+        font-weight: 600;
+    }
+    [data-testid="stSidebarNav"] svg { stroke: #FFFFFF !important; fill: #FFFFFF !important; }
 </style>
 """, unsafe_allow_html=True)
 
 st.title("⚡ Database Live: Terminale BNP Paribas")
 st.markdown("Dati estratti direttamente tramite API. Aggiornamento in tempo reale.")
 
+# --- MOTORE DI ESTRAZIONE API (REVERSE ENGINEERING) ---
 @st.cache_data(ttl=900) # Cache di 15 minuti per evitare il blocco IP
 def fetch_live_certificates():
     url = "https://investimenti.bnpparibas.it/apiv2/api/v1/productlist/"
