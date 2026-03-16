@@ -26,7 +26,6 @@ def run_stress_test(base_params: TurboParameters) -> pd.DataFrame:
         
         is_ko = spot_scenario >= barriera
         if is_ko:
-            # Usiamo le nuove chiavi aggiornate per il calcolo Netto
             res['pl_turbo_netto'] = -res['capitale'] 
             res['hedge_ratio_reale'] = 0.0
             
