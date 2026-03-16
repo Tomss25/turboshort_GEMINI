@@ -6,6 +6,8 @@ from backtest import run_historical_backtest, generate_pdf_report
 import datetime
 
 st.set_page_config(page_title="Turbo Hedge Quant", layout="wide", page_icon="🏦")
+
+# --- INIEZIONE CSS CORPORATE & PULSANTE BLUE NAVY ---
 st.markdown("""
 <style>
     .stApp { background-color: #F4F7F6; }
@@ -16,6 +18,20 @@ st.markdown("""
     .stTabs [aria-selected="true"] { background-color: #1A365D !important; color: white !important; }
     div[data-testid="stMetricValue"] { color: #2B6CB0; font-weight: bold; }
     .risk-toggle { background-color: #FFFFFF; padding: 15px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); margin-bottom: 20px; border-left: 5px solid #1A365D; }
+    
+    /* STILE PULSANTE BLUE NAVY */
+    div[data-testid="stFormSubmitButton"] button {
+        background-color: #1A365D !important;
+        color: #FFFFFF !important;
+        border: none !important;
+        font-weight: bold !important;
+        padding: 10px 24px !important;
+        border-radius: 6px !important;
+    }
+    div[data-testid="stFormSubmitButton"] button:hover {
+        background-color: #2c5282 !important;
+        color: #FFFFFF !important;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -29,7 +45,7 @@ is_real_ratio = st.toggle(
 )
 st.markdown('</div>', unsafe_allow_html=True)
 
-tab1, tab2 = st.tabs(["🎯 Setup Copertura & Stress Test", "📈 Backtest & Reportistica"])
+tab1, tab2 = st.tabs(["🎯 Setup Copertura & Scenario", "📈 Backtest & Reportistica"])
 
 with tab1:
     with st.form("input_form"):
@@ -68,40 +84,194 @@ with tab1:
 
     if 'res' in st.session_state:
         res = st.session_state['res']
-        
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Fair Value", f"€ {res['fair_value']:.4f}")
-        c2.metric("Barriera K.O.", f"{res['barriera']:.2f}")
-        c3.metric("N. Turbo (Beta Adj)", f"{res['n_turbo']:.2f}")
-        c4.metric("Capitale Rischio", f"€ {res['capitale']:,.2f}")
+        params = st.session_state['params']
         
         st.divider()
-        st.markdown("### 📊 Efficacia della Copertura a Scadenza")
+        st.markdown(f"<h2>📊 Risultati della Copertura</h2>", unsafe_allow_html=True)
         
-        r1, r2, r3, r4 = st.columns(4)
-        r1.metric("P&L Ptf Nudo", f"€ {res['pl_portafoglio']:,.2f}")
+        excel_col1, excel_col2, excel_col3 = st.columns([1, 1, 1.3])
         
-        if is_real_ratio:
-            r2.metric("P&L Copertura (Netto)", f"€ {res['pl_turbo_netto']:,.2f}")
-            hr_val = res['hedge_ratio_reale'] * 100
-            label_hr = "Hedge Ratio (Reale)"
-        else:
-            r2.metric("P&L Copertura (Lordo)", f"€ {res['pl_turbo_lordo']:,.2f}")
-            hr_val = res['hedge_ratio_commerciale'] * 100
-            label_hr = "Hedge Ratio (Illusorio)"
+        # --- COLONNA 1: CARATTERISTICHE TURBO ---
+        with excel_col1:
+            st.markdown("""
+            <div style='background-color: #2c5282; padding: 12px; border-radius: 5px; text-align: center; margin-bottom: 15px;'>
+            <h4 style='margin: 0; color: white; font-size: 16px;'>CARATTERISTICHE TURBO SHORT</h4>
+            </div>
+            """, unsafe_allow_html=True)
             
-        if res['pl_portafoglio'] >= 0:
-            r3.warning("N/A (Indice in rialzo)")
-        elif hr_val >= 90:
-            r3.success(f"🎯 {label_hr}: {hr_val:.1f}%")
-        elif hr_val >= 50:
-            r3.warning(f"⚠️ {label_hr}: {hr_val:.1f}%")
-        else:
-            r3.error(f"🚨 {label_hr}: {hr_val:.1f}%")
-            
-        color = "normal" if res['percentuale'] >= 0 else "inverse"
-        r4.metric("Rendimento Netto Totale", f"{res['percentuale'] * 100:.2f}%", delta_color=color)
+            st.markdown(f"""
+            <table style='width: 100%; border-collapse: collapse; font-size: 14px;'>
+            <tr style='background-color: #F8F9FA;'>
+                <td style='padding: 8px; border: 1px solid #dee2e6;'><strong>Prezzo iniziale</strong></td>
+                <td style='padding: 8px; border: 1px solid #dee2e6; text-align: right;'>{params.prezzo_iniziale:.2f} €</td>
+            </tr>
+            <tr>
+                <td style='padding: 8px; border: 1px solid #dee2e6;'><strong>Fair Value</strong></td>
+                <td style='padding: 8px; border: 1px solid #dee2e6; text-align: right; color: #2c5282; font-weight: bold;'>{res['fair_value']:.4f} €</td>
+            </tr>
+            <tr style='background-color: #F8F9FA;'>
+                <td style='padding: 8px; border: 1px solid #dee2e6;'><strong>Premio</strong></td>
+                <td style='padding: 8px; border: 1px solid #dee2e6; text-align: right;'>{res['premio']:.4f} €</td>
+            </tr>
+            <tr>
+                <td style='padding: 8px; border: 1px solid #dee2e6;'><strong>Strike</strong></td>
+                <td style='padding: 8px; border: 1px solid #dee2e6; text-align: right;'>{params.strike:.2f}</td>
+            </tr>
+            <tr style='background-color: #F8F9FA;'>
+                <td style='padding: 8px; border: 1px solid #dee2e6;'><strong>Tasso di cambio</strong></td>
+                <td style='padding: 8px; border: 1px solid #dee2e6; text-align: right;'>{params.cambio:.2f}</td>
+            </tr>
+            <tr>
+                <td style='padding: 8px; border: 1px solid #dee2e6;'><strong>Multiplo</strong></td>
+                <td style='padding: 8px; border: 1px solid #dee2e6; text-align: right;'>{params.multiplo:.3f}</td>
+            </tr>
+            <tr style='height: 20px;'><td colspan='2' style='border: none;'></td></tr>
+            <tr style='background-color: #F8F9FA;'>
+                <td style='padding: 8px; border: 1px solid #dee2e6;'><strong>Euribor 12M</strong></td>
+                <td style='padding: 8px; border: 1px solid #dee2e6; text-align: right;'>{params.euribor:.5f}</td>
+            </tr>
+            </table>
+            """, unsafe_allow_html=True)
 
+        # --- COLONNA 2: INDICE ---
+        with excel_col2:
+            st.markdown("""
+            <div style='background-color: #2c5282; padding: 12px; border-radius: 5px; text-align: center; margin-bottom: 15px;'>
+            <h4 style='margin: 0; color: white; font-size: 16px;'>INDICE DA COPRIRE</h4>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            st.markdown(f"""
+            <table style='width: 100%; border-collapse: collapse; font-size: 14px;'>
+            <tr style='background-color: #F8F9FA;'>
+                <td style='padding: 8px; border: 1px solid #dee2e6;'><strong>Valore Iniziale</strong></td>
+                <td style='padding: 8px; border: 1px solid #dee2e6; text-align: right;'>{params.valore_iniziale:.2f}</td>
+            </tr>
+            <tr>
+                <td style='padding: 8px; border: 1px solid #dee2e6;'><strong>Valore Ipotetico</strong></td>
+                <td style='padding: 8px; border: 1px solid #dee2e6; text-align: right; color: #c62828; font-weight: bold;'>{params.valore_ipotetico:.2f}</td>
+            </tr>
+            <tr style='background-color: #F8F9FA;'>
+                <td style='padding: 8px; border: 1px solid #dee2e6;'><strong>Giorni</strong></td>
+                <td style='padding: 8px; border: 1px solid #dee2e6; text-align: right;'>{params.giorni}</td>
+            </tr>
+            <tr style='height: 20px;'><td colspan='2' style='border: none;'></td></tr>
+            <tr>
+                <td style='padding: 8px; border: 1px solid #dee2e6;'><strong>Prezzo Turbo Short</strong></td>
+                <td style='padding: 8px; border: 1px solid #dee2e6; text-align: right; color: #2c5282; font-weight: bold;'>{res['prezzo_futuro']:.4f} €</td>
+            </tr>
+            <tr style='background-color: #F8F9FA;'>
+                <td style='padding: 8px; border: 1px solid #dee2e6;'><strong>Barriera Turbo Short</strong></td>
+                <td style='padding: 8px; border: 1px solid #dee2e6; text-align: right;'>{res['barriera']:.2f}</td>
+            </tr>
+            <tr>
+                <td style='padding: 8px; border: 1px solid #dee2e6;'><strong>Leva Turbo Short</strong></td>
+                <td style='padding: 8px; border: 1px solid #dee2e6; text-align: right;'>{res['leva']:.2f}</td>
+            </tr>
+            </table>
+            """, unsafe_allow_html=True)
+
+        # --- COLONNA 3: PORTAFOGLIO & PERFORMANCE ---
+        with excel_col3:
+            st.markdown("""
+            <div style='background-color: #2c5282; padding: 12px; border-radius: 5px; text-align: center; margin-bottom: 15px;'>
+            <h4 style='margin: 0; color: white; font-size: 16px;'>PORTAFOGLIO DA COPRIRE</h4>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            st.markdown(f"""
+            <div style='text-align: right; font-size: 24px; font-weight: bold; color: #2c5282; margin-bottom: 20px; padding: 10px; background-color: #F8F9FA; border-radius: 5px;'>
+            {params.portafoglio:,.2f} €
+            </div>
+            """, unsafe_allow_html=True)
+            
+            st.markdown(f"""
+            <table style='width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 14px;'>
+            <tr style='background-color: #F8F9FA;'>
+                <td style='padding: 8px; border: 1px solid #dee2e6;'><strong>N. Turbo Short</strong></td>
+                <td style='padding: 8px; border: 1px solid #dee2e6; text-align: right;'>{res['n_turbo']:.2f}</td>
+                <td rowspan='2' style='padding: 8px; border: 1px solid #dee2e6; text-align: center; vertical-align: middle; background-color: #E3F2FD; font-weight: bold;'>TOTALE CON<br/>COPERTURA</td>
+            </tr>
+            <tr>
+                <td style='padding: 8px; border: 1px solid #dee2e6;'><strong>Capitale</strong></td>
+                <td style='padding: 8px; border: 1px solid #dee2e6; text-align: right;'>{res['capitale']:,.2f} €</td>
+            </tr>
+            <tr style='background-color: #FFF3E0;'>
+                <td colspan='2' style='padding: 8px; border: 1px solid #dee2e6; text-align: right; font-weight: bold;'></td>
+                <td style='padding: 8px; border: 1px solid #dee2e6; text-align: center; color: #E65100; font-weight: bold; font-size: 16px;'>{res['totale_copertura']:,.2f} €</td>
+            </tr>
+            </table>
+            """, unsafe_allow_html=True)
+            
+            st.markdown("""
+            <div style='background-color: #E3F2FD; padding: 10px; border-radius: 5px; text-align: center; margin-top: 20px; margin-bottom: 10px;'>
+            <strong style='color: #0D47A1;'>VALORE PORTAFOGLIO SIMULATO</strong>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            st.markdown(f"""
+            <table style='width: 100%; border-collapse: collapse; font-size: 14px;'>
+            <tr style='background-color: #F8F9FA;'>
+                <td style='padding: 8px; border: 1px solid #dee2e6;'></td>
+                <td style='padding: 8px; border: 1px solid #dee2e6; text-align: right; font-weight: bold;'>VALORE COPERTURA</td>
+            </tr>
+            <tr>
+                <td style='padding: 8px; border: 1px solid #dee2e6;'><strong>Portafoglio</strong></td>
+                <td style='padding: 8px; border: 1px solid #dee2e6; text-align: right;'>{res['valore_ptf_simulato']:,.2f} €</td>
+            </tr>
+            <tr style='background-color: #F8F9FA;'>
+                <td style='padding: 8px; border: 1px solid #dee2e6;'><strong>Turbo (netto)</strong></td>
+                <td style='padding: 8px; border: 1px solid #dee2e6; text-align: right; color: #2E7D32; font-weight: bold;'>{res['valore_copertura_simulata']:,.2f} €</td>
+            </tr>
+            <tr style='height: 10px;'><td colspan='2' style='border: none;'></td></tr>
+            <tr style='background-color: #E3F2FD;'>
+                <td style='padding: 8px; border: 1px solid #dee2e6;'><strong>TOTALE</strong></td>
+                <td style='padding: 8px; border: 1px solid #dee2e6; text-align: right; font-weight: bold; font-size: 16px;'>{res['totale_simulato']:,.2f} €</td>
+            </tr>
+            </table>
+            """, unsafe_allow_html=True)
+            
+            perf = res['percentuale'] * 100
+            perf_bg = '#E8F5E9' if perf >= 0 else '#FFEBEE'
+            perf_color = '#2E7D32' if perf >= 0 else '#C62828'
+            perf_sign = '+' if perf >= 0 else ''
+            
+            st.markdown(f"""
+            <div style='background-color: {perf_bg}; padding: 20px; border-radius: 5px; text-align: center; border: 3px solid {perf_color}; margin-top: 15px;'>
+            <div style='font-size: 42px; font-weight: bold; color: {perf_color}; line-height: 1;'>{perf_sign}{perf:.2f}%</div>
+            <div style='color: #666; font-size: 12px; margin-top: 8px; font-weight: 600;'>PERFORMANCE COPERTA</div>
+            </div>
+            """, unsafe_allow_html=True)
+
+        # --- DIAGNOSI E COMMENTO RISK MANAGER ---
+        st.divider()
+        
+        # Logica del verdetto sul singolo scenario calcolato
+        hr_val = (res['hedge_ratio_reale'] if is_real_ratio else res['hedge_ratio_commerciale']) * 100
+        label_hr = "Hedge Ratio (Reale)" if is_real_ratio else "Hedge Ratio (Commerciale/Lordo)"
+        
+        col_diag1, col_diag2 = st.columns([1, 2])
+        
+        with col_diag1:
+            st.metric(label=f"🛡️ {label_hr}", value=f"{hr_val:.1f}%")
+            if not is_real_ratio:
+                st.caption("⚠️ *Stai visualizzando il rapporto lordo che ignora i costi. Passa alla modalità Risk Manager in alto.*")
+                
+        with col_diag2:
+            is_ko = params.valore_ipotetico >= res['barriera']
+            
+            if is_ko:
+                st.error("**🚨 VERDETTO: KNOCK-OUT (Rischio Rovina)**\n\nNello scenario ipotizzato l'indice ha sfondato la barriera. Il certificato è stato annullato, l'intero premio pagato è stato bruciato e il portafoglio è rimasto totalmente scoperto alla discesa. **Consiglio:** Questo strike è troppo aggressivo per questo scenario di stress. Scegli un Turbo con strike più alto.")
+            elif res['pl_portafoglio'] >= 0:
+                st.info("**ℹ️ VERDETTO: CASH DRAG (Mercato in Rialzo)**\n\nL'indice è salito o rimasto stabile. Il portafoglio è in profitto, ma la copertura ha operato come un'assicurazione a perdere, erodendo la performance netta a causa del deprezzamento del derivato. **Consiglio:** Accettabile se l'hedge era puramente difensivo.")
+            elif hr_val >= 90:
+                st.success(f"**✅ VERDETTO: COPERTURA OTTIMALE**\n\nLa struttura è chirurgica. Il guadagno netto del derivato neutralizza con successo il {hr_val:.1f}% della perdita del portafoglio senza avvicinarsi criticamente alla barriera. **Consiglio:** Configurazione raccomandata per questo scenario.")
+            elif hr_val >= 50:
+                st.warning(f"**⚠️ VERDETTO: SOTTOCOPERTURA**\n\nLa struttura assorbe solo il {hr_val:.1f}% della perdita. O hai investito troppo poco capitale, o l'effetto del decadimento temporale (Time Decay) sta mangiando i profitti del derivato. **Consiglio:** Aumenta il capitale allocato all'hedge o usa uno strumento con leva maggiore.")
+            else:
+                st.error(f"**❌ VERDETTO: COPERTURA INEFFICACE**\n\nStai coprendo solo il {hr_val:.1f}%. I costi e il decadimento del derivato superano i benefici direzionali. **Consiglio:** La strategia attuale sta bruciando liquidità senza offrire reale protezione. Ricalibra leva e capitale.")
+
+        # --- SEZIONI GRAFICHE E STRESS TEST ---
         st.divider()
         st.subheader("⚠️ Matrice di Stress Estremo")
         df_stress = run_stress_test(st.session_state['params'])
@@ -126,14 +296,16 @@ with tab2:
         
         if st.button("🚀 Avvia Backtest Quantitativo", type="primary"):
             with st.spinner("Compilazione dati ed esecuzione logiche di Knock-Out..."):
-                df_bt, msg = run_historical_backtest(
+                df_bt, msg, diagnosis = run_historical_backtest(
                     ticker_ptf, ticker_idx, start_date, end_date, st.session_state['barriera_calcolata']
                 )
                 
                 if df_bt is not None:
                     st.success("Analisi completata.")
                     
-                    pdf_bytes = generate_pdf_report(df_bt, ticker_ptf, ticker_idx, st.session_state['barriera_calcolata'])
+                    pdf_bytes = generate_pdf_report(
+                        df_bt, ticker_ptf, ticker_idx, st.session_state['barriera_calcolata'], diagnosis
+                    )
                     
                     st.download_button(
                         label="📄 Scarica Report Risk Management (PDF)",
@@ -144,5 +316,14 @@ with tab2:
                     
                     st.line_chart(df_bt.set_index('Date')['Beta_60d'])
                     st.dataframe(df_bt[['Date', 'Ptf_Close', 'Idx_High', 'Drawdown', 'Beta_60d', 'Knock_Out_Event']].tail(30), use_container_width=True)
+                    
+                    st.divider()
+                    st.markdown("### Verdetto Storico del Risk Manager")
+                    if diagnosis['color'] == 'error':
+                        st.error(f"**🚨 {diagnosis['title']}**\n\n{diagnosis['body']}\n\n**{diagnosis['action']}**")
+                    elif diagnosis['color'] == 'warning':
+                        st.warning(f"**⚠️ {diagnosis['title']}**\n\n{diagnosis['body']}\n\n**{diagnosis['action']}**")
+                    else:
+                        st.success(f"**✅ {diagnosis['title']}**\n\n{diagnosis['body']}\n\n**{diagnosis['action']}**")
                 else:
                     st.error(f"Errore: {msg}")
