@@ -26,18 +26,19 @@ def run_stress_test(base_params: TurboParameters) -> pd.DataFrame:
         
         is_ko = spot_scenario >= barriera
         if is_ko:
-            res['pl_turbo'] = -res['capitale'] 
-            res['hedge_ratio'] = 0.0
+            # Usiamo le nuove chiavi aggiornate per il calcolo Netto
+            res['pl_turbo_netto'] = -res['capitale'] 
+            res['hedge_ratio_reale'] = 0.0
             
-        pl_netto = res['pl_portafoglio'] + res['pl_turbo']
+        pl_netto = res['pl_portafoglio'] + res['pl_turbo_netto']
         
         results.append({
             "Scenario": name,
             "Var. Indice": f"{var*100:.1f}%",
             "P&L Ptf": f"€ {res['pl_portafoglio']:,.0f}",
-            "P&L Turbo": f"€ {res['pl_turbo']:,.0f}",
+            "P&L Turbo": f"€ {res['pl_turbo_netto']:,.0f}",
             "P&L Netto": f"€ {pl_netto:,.0f}",
-            "Hedge Ratio": f"{res['hedge_ratio']*100:.1f}%",
+            "Hedge Ratio": f"{res['hedge_ratio_reale']*100:.1f}%",
             "Status": "❌ K.O." if is_ko else "✅ Attivo"
         })
         
