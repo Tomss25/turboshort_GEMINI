@@ -38,7 +38,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- MOTORE ESTRAZIONE DATI BNP (Nascosto nel backend) ---
+# --- MOTORE ESTRAZIONE DATI BNP (Livello Quantitativo) ---
 @st.cache_data(ttl=900)
 def fetch_live_certificates():
     url = "https://investimenti.bnpparibas.it/apiv2/api/v1/productlist/"
@@ -49,6 +49,7 @@ def fetch_live_certificates():
         "languageid": "it",
         "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
     }
+    # Richiediamo tutto lo spettro per processarlo in memoria
     payload = {
         "clientId": 1, "languageId": "it", "countryId": "", "sortPreference": [], "filterSelections": [],
         "derivativeTypeIds": [7, 9, 23, 24, 580, 581], "productGroupIds": [7],
@@ -71,7 +72,6 @@ def fetch_live_certificates():
         df = pd.json_normalize(items)
         col_mapping = {}
         
-        # Riordino le colonne per mappare prima i nomi diretti ed evitare doppioni
         for c in sorted(df.columns, key=len):
             cl = c.lower()
             if 'isin' in cl and 'underlying' not in cl: col_mapping[c] = 'ISIN'
@@ -86,23 +86,30 @@ def fetch_live_certificates():
             elif 'assetclassid' in cl or 'assetclass.id' in cl: col_mapping[c] = 'Categoria_ID'
 
         df.rename(columns=col_mapping, inplace=True)
-        df = df.loc[:, ~df.columns.duplicated()] # Deduplicazione
+        df = df.loc[:, ~df.columns.duplicated()] 
         
-        # TRADUTTORE ASSET CLASS (Mappa ID numerici su stringhe leggibili)
+        # CACCIA AL TIPO (Trova dinamicamente la colonna che contiene 'Turbo Short')
+        tipo_cols = [c for c in df.columns if df[c].astype(str).str.contains('Short', case=False, na=False).any()]
+        if tipo_cols: df['Tipo'] = df[tipo_cols[0]]
+        else: df['Tipo'] = 'Turbo Short' 
+
+        # EPURAZIONE: Elimina tutto ciò che non è Short
+        df = df[df['Tipo'].astype(str).str.contains('Short', case=False, na=False)]
+
+        # TRADUTTORE ASSET CLASS
         if 'Categoria_ID' in df.columns:
             asset_map = {1: 'Azioni', 2: 'Indici', 3: 'Valute', 4: 'Materie prime', 5: 'Tassi di interesse', 11: 'ETF', 14: 'Volatility'}
-            df['Categoria'] = pd.to_numeric(df['Categoria_ID'], errors='coerce').map(asset_map).fillna('Altro')
+            df['Classe'] = pd.to_numeric(df['Categoria_ID'], errors='coerce').map(asset_map).fillna('Altro')
         else:
-            df['Categoria'] = 'N/D'
+            df['Classe'] = 'N/D'
 
-        # GESTIONE SCADENZA (Formatta date)
+        # GESTIONE SCADENZA
         if 'Scadenza' in df.columns:
             df['Scadenza'] = pd.to_datetime(df['Scadenza'], errors='coerce').dt.strftime('%d/%m/%Y').fillna('Open End')
         else:
             df['Scadenza'] = 'Open End'
         
-        # Forza l'ordine delle colonne istituzionale
-        colonne_utili = ['Sottostante', 'ISIN', 'Categoria', 'Scadenza', 'Strike', 'Multiplo', 'Leva', 'Distanza Barriera %', 'Denaro', 'Lettera']
+        colonne_utili = ['Sottostante', 'ISIN', 'Tipo', 'Classe', 'Scadenza', 'Strike', 'Multiplo', 'Leva', 'Distanza Barriera %', 'Denaro', 'Lettera']
         colonne_finali = [c for c in colonne_utili if c in df.columns]
         
         if len(colonne_finali) >= 4:
@@ -111,8 +118,7 @@ def fetch_live_certificates():
                 if col in df.columns: df[col] = pd.to_numeric(df[col], errors='coerce')
         return df.dropna(subset=['Strike', 'Lettera'])
     except Exception as e:
-        return pd.DataFrame({"Errore": [f"Errore connessione API: {str(e)}"]})
-
+        return pd.DataFrame({"Errore": [f"Errore API o Parsing: {str(e)}"]})
 
 # --- SIDEBAR ATTRITI ---
 st.sidebar.header("📉 Attriti di Mercato")
@@ -301,7 +307,7 @@ with tab3:
             
         with col2: 
             categorie_fisse = ["Tutte le categorie", "Azioni", "ETF", "Indici", "Materie prime", "Tassi di interesse", "Valute", "Volatility"]
-            scelta_cat = st.selectbox("Categoria", categorie_fisse)
+            scelta_cat = st.selectbox("Classe Sottostante", categorie_fisse)
             
         with col3: 
             ricerca_libera = st.text_input("Ricerca (es. ISIN):")
@@ -310,14 +316,19 @@ with tab3:
         if scelta_sott != "Tutti": 
             df_filtered = df_filtered[df_filtered['Sottostante'] == scelta_sott]
         if scelta_cat != "Tutte le categorie": 
-            df_filtered = df_filtered[df_filtered['Categoria'] == scelta_cat]
+            df_filtered = df_filtered[df_filtered['Classe'] == scelta_cat]
         if ricerca_libera: 
             df_filtered = df_filtered[df_filtered.astype(str).apply(lambda x: x.str.contains(ricerca_libera, case=False)).any(axis=1)]
         
-        selection = st.dataframe(df_filtered, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row")
+        # Riordino finale e selezione
+        colonne_visibili = ['Sottostante', 'ISIN', 'Tipo', 'Classe', 'Scadenza', 'Strike', 'Multiplo', 'Leva', 'Distanza Barriera %', 'Denaro', 'Lettera']
+        df_visibile = df_filtered[[c for c in colonne_visibili if c in df_filtered.columns]]
+        
+        st.markdown(f"**Certificati Short Disponibili:** {len(df_visibile)}")
+        selection = st.dataframe(df_visibile, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row")
         
         if len(selection.selection.rows) > 0:
-            certificato = df_filtered.iloc[selection.selection.rows[0]]
+            certificato = df_visibile.iloc[selection.selection.rows[0]]
             prezzo_val = certificato.get('Lettera', certificato.get('Denaro', 0.0))
             if pd.isna(prezzo_val): prezzo_val = 0.0
             
