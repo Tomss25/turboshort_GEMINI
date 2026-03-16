@@ -11,8 +11,6 @@ from backtest import run_historical_backtest, generate_pdf_report
 # --- STATO DELLA SESSIONE ---
 if 'selected_cert' not in st.session_state:
     st.session_state['selected_cert'] = None
-if 'ideal_params' not in st.session_state:
-    st.session_state['ideal_params'] = None
 
 st.set_page_config(page_title="Turbo Hedge Quant", layout="wide", page_icon="🏦")
 
@@ -25,8 +23,18 @@ st.markdown("""
     .stTabs [data-baseweb="tab-list"] { background-color: transparent; }
     .stTabs [data-baseweb="tab"] { background-color: #E2E8F0; border-radius: 8px 8px 0 0; border: none; }
     .stTabs [aria-selected="true"] { background-color: #1A365D !important; color: white !important; }
+    div[data-testid="stMetricValue"] { color: #2B6CB0; font-weight: bold; }
     .risk-toggle { background-color: #FFFFFF; padding: 15px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); margin-bottom: 20px; border-left: 5px solid #1A365D; }
     div[data-testid="stFormSubmitButton"] button, .action-btn { background-color: #1A365D !important; color: #FFFFFF !important; border: none !important; font-weight: bold !important; padding: 10px 24px !important; border-radius: 6px !important; }
+    div[data-testid="stFormSubmitButton"] button:hover, .action-btn:hover { background-color: #2c5282 !important; color: #FFFFFF !important; }
+    [data-testid="stSidebar"] { background-color: #1A365D !important; }
+    [data-testid="stSidebar"] .stMarkdown p, [data-testid="stSidebar"] .stMarkdown h1, [data-testid="stSidebar"] .stMarkdown h2, [data-testid="stSidebar"] .stMarkdown h3, [data-testid="stSidebar"] .stMarkdown em { color: #FFFFFF !important; }
+    [data-testid="stSidebar"] [data-testid="stExpander"] { background-color: #FFFFFF !important; border-radius: 8px !important; border: none !important; margin-bottom: 12px !important; }
+    [data-testid="stSidebar"] [data-testid="stExpander"] p, [data-testid="stSidebar"] [data-testid="stExpander"] label, [data-testid="stSidebar"] [data-testid="stExpander"] div { color: #1A365D !important; font-weight: 500; }
+    [data-testid="stSidebar"] [data-testid="stExpander"] input { background-color: #F4F7F6 !important; color: #000000 !important; border: 1px solid #CBD5E0 !important; }
+    [data-testid="stSidebar"] [data-testid="stExpander"] svg { stroke: #1A365D !important; }
+    [data-testid="stSidebarNav"] span, [data-testid="stSidebarNav"] div { color: #FFFFFF !important; font-weight: 600; }
+    [data-testid="stSidebarNav"] svg { stroke: #FFFFFF !important; fill: #FFFFFF !important; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -34,14 +42,35 @@ st.markdown("""
 @st.cache_data(ttl=900)
 def fetch_live_certificates():
     url = "https://investimenti.bnpparibas.it/apiv2/api/v1/productlist/"
-    headers = {"accept": "application/json", "clientid": "1", "content-type": "application/json", "languageid": "it", "user-agent": "Mozilla/5.0"}
-    payload = {"clientId": 1, "languageId": "it", "countryId": "", "sortPreference": [], "filterSelections": [], "derivativeTypeIds": [7, 9, 23, 24, 580, 581], "productGroupIds": [7], "offset": 0, "limit": 5000, "resolveSubPreset": True, "resolveOnlySelectedPresets": False, "allowLeverageGrouping": False}
+    headers = {
+        "accept": "application/json",
+        "clientid": "1",
+        "content-type": "application/json",
+        "languageid": "it",
+        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+    }
+    payload = {
+        "clientId": 1, "languageId": "it", "countryId": "", "sortPreference": [], "filterSelections": [],
+        "derivativeTypeIds": [7, 9, 23, 24, 580, 581], "productGroupIds": [7],
+        "offset": 0, "limit": 5000, "resolveSubPreset": True, "resolveOnlySelectedPresets": False, "allowLeverageGrouping": False
+    }
     try:
         response = requests.post(url, headers=headers, json=payload, timeout=15)
+        response.raise_for_status()
         data = response.json()
-        items = data.get('products', data.get('data', []))
+        
+        items = []
+        if 'products' in data: items = data['products']
+        elif 'data' in data and isinstance(data['data'], list): items = data['data']
+        else:
+            list_keys = [k for k in data.keys() if isinstance(data[k], list)]
+            if list_keys: items = data[max(list_keys, key=lambda k: len(data[k]))]
+                    
+        if not items: return pd.DataFrame({"Errore": ["Nessun dato dal server BNP."]})
+            
         df = pd.json_normalize(items)
         col_mapping = {}
+        
         for c in sorted(df.columns, key=len):
             cl = c.lower()
             if 'isin' in cl and 'underlying' not in cl: col_mapping[c] = 'ISIN'
@@ -52,146 +81,368 @@ def fetch_live_certificates():
             elif cl == 'bid' or cl.endswith('.bid'): col_mapping[c] = 'Denaro'
             elif 'leverage' in cl: col_mapping[c] = 'Leva'
             elif 'distancetobarrier' in cl: col_mapping[c] = 'Distanza Barriera %'
-            elif 'assetclassid' in cl: col_mapping[c] = 'Categoria_ID'
+            elif 'valuationdate' in cl or 'maturitydate' in cl: col_mapping[c] = 'Scadenza'
+            elif 'assetclassid' in cl or 'assetclass.id' in cl: col_mapping[c] = 'Categoria_ID'
+
         df.rename(columns=col_mapping, inplace=True)
         df = df.loc[:, ~df.columns.duplicated()] 
-        df = df[df['ISIN'].notna()]
-        # Filtro Short forzato
+        
         tipo_cols = [c for c in df.columns if df[c].astype(str).str.contains('Short', case=False, na=False).any()]
-        if tipo_cols: df = df[df[tipo_cols[0]].astype(str).str.contains('Short', case=False, na=False)]
-        
-        asset_map = {1: 'Azioni', 2: 'Indici', 3: 'Valute', 4: 'Materie prime', 5: 'Tassi di interesse', 11: 'ETF', 14: 'Volatility'}
+        if tipo_cols: df['Tipo'] = df[tipo_cols[0]]
+        else: df['Tipo'] = 'Turbo Short' 
+
+        df = df[df['Tipo'].astype(str).str.contains('Short', case=False, na=False)]
+
         if 'Categoria_ID' in df.columns:
+            asset_map = {1: 'Azioni', 2: 'Indici', 3: 'Valute', 4: 'Materie prime', 5: 'Tassi di interesse', 11: 'ETF', 14: 'Volatility'}
             df['Classe'] = pd.to_numeric(df['Categoria_ID'], errors='coerce').map(asset_map).fillna('Altro')
-        
-        for col in ['Strike', 'Multiplo', 'Lettera', 'Denaro', 'Leva', 'Distanza Barriera %']:
-            if col in df.columns: df[col] = pd.to_numeric(df[col], errors='coerce')
-        return df.dropna(subset=['Strike', 'Lettera'])
-    except: return pd.DataFrame()
-
-# --- SIDEBAR ---
-st.sidebar.header("📉 Attriti")
-ui_spread = st.sidebar.number_input("Spread (%)", value=0.5) / 100
-ui_comm = st.sidebar.number_input("Comm (%)", value=0.1) / 100
-ui_div = st.sidebar.number_input("Dividendi (%)", value=1.5) / 100
-
-st.title("🏦 Hedge Intelligence System (v5.0)")
-
-tab1, tab2, tab3, tab4 = st.tabs(["🎯 Setup & Sensitività", "📈 Backtest", "🔍 Database Live", "🧠 Ricerca Intelligente"])
-
-# ======================================================================
-# TAB 4: INTELLIGENCE & MATCHMAKING
-# ======================================================================
-with tab4:
-    st.header("🧠 Calcolo Struttura Ideale")
-    st.markdown("Inserisci i parametri del tuo portafoglio e la tua tolleranza al rischio per trovare il certificato perfetto.")
-    
-    with st.container():
-        c1, c2, c3 = st.columns(3)
-        cap_ptf = c1.number_input("Capitale da coprire (€)", value=200000.0, step=1000.0, key="iq_cap")
-        beta_ptf = c2.number_input("Beta del Portafoglio", value=1.0, step=0.1, key="iq_beta")
-        idx_spot = c3.number_input("Livello Corrente Indice", value=6670.0, step=1.0, key="iq_spot")
-        
-        c4, c5, c6 = st.columns(3)
-        buffer = c4.slider("Cuscinetto di Sicurezza (Distanza Barriera %)", 5, 50, 15, help="A che distanza deve essere lo Strike per non essere colpito da rimbalzi?")
-        leva_target = c5.select_slider("Profilo Aggressività (Leva)", options=[2, 5, 10, 20, 50], value=10)
-        
-    if st.button("🔍 Calcola Struttura e Trova Match", type="primary"):
-        # Logica IQ: Lo strike ideale è Spot * (1 + Buffer%)
-        strike_ideale = idx_spot * (1 + (buffer/100))
-        # Esposizione nominale necessaria = Capitale * Beta
-        exp_nominale = cap_ptf * beta_ptf
-        
-        st.session_state['ideal_params'] = {
-            "strike": strike_ideale,
-            "leva": leva_target,
-            "spot": idx_spot
-        }
-        
-        st.subheader("🎯 Parametri Teorici Ottimali")
-        m1, m2, m3 = st.columns(3)
-        m1.metric("Strike Ideale", f"{strike_ideale:.2f}")
-        m2.metric("Leva Consigliata", f"{leva_target}x")
-        m3.metric("Esposizione Nominale", f"{exp_nominale:,.0f} €")
-        
-        # --- ALGORITMO DI MATCHING ---
-        df_live = fetch_live_certificates()
-        if not df_live.empty:
-            # Filtriamo per lo stesso sottostante se possibile o mostriamo i migliori in generale
-            # Calcolo dello Score di Matching (Scarto pesato tra Strike e Leva)
-            df_live['Score'] = (abs(df_live['Strike'] - strike_ideale) / strike_ideale) + (abs(df_live['Leva'] - leva_target) / leva_target)
-            
-            matches = df_live.sort_values('Score').head(5)
-            
-            st.success("✅ Match trovati nel Database BNP Paribas:")
-            
-            # Mostriamo i risultati con pulsante di selezione rapida
-            for idx, row in matches.iterrows():
-                with st.expander(f"MATCH #{idx} - ISIN: {row['ISIN']} ({row['Sottostante']})"):
-                    col_a, col_b, col_c = st.columns(3)
-                    col_a.write(f"**Strike:** {row['Strike']}")
-                    col_b.write(f"**Leva:** {row['Leva']}")
-                    col_c.write(f"**Distanza Barriera:** {row['Distanza Barriera %']}%")
-                    
-                    if st.button(f"Aggancia ISIN {row['ISIN']}", key=row['ISIN']):
-                        st.session_state['selected_cert'] = {
-                            "isin": row['ISIN'],
-                            "strike": float(row['Strike']),
-                            "multiplo": float(row['Multiplo']),
-                            "prezzo": float(row['Lettera'])
-                        }
-                        st.success(f"Certificato {row['ISIN']} inviato al Setup!")
-                        st.balloons()
         else:
-            st.error("Impossibile accedere al database live per il matching.")
+            df['Classe'] = 'N/D'
+
+        if 'Scadenza' in df.columns:
+            df['Scadenza'] = pd.to_datetime(df['Scadenza'], errors='coerce').dt.strftime('%d/%m/%Y').fillna('Open End')
+        else:
+            df['Scadenza'] = 'Open End'
+        
+        colonne_utili = ['Sottostante', 'ISIN', 'Tipo', 'Classe', 'Scadenza', 'Strike', 'Multiplo', 'Leva', 'Distanza Barriera %', 'Denaro', 'Lettera']
+        colonne_finali = [c for c in colonne_utili if c in df.columns]
+        
+        if len(colonne_finali) >= 4:
+            df = df[colonne_finali].copy()
+            for col in ['Strike', 'Multiplo', 'Lettera', 'Denaro', 'Leva', 'Distanza Barriera %']:
+                if col in df.columns: df[col] = pd.to_numeric(df[col], errors='coerce')
+        return df.dropna(subset=['Strike', 'Lettera'])
+    except Exception as e:
+        return pd.DataFrame({"Errore": [f"Errore API o Parsing: {str(e)}"]})
+
+# --- SIDEBAR ATTRITI ---
+st.sidebar.header("📉 Attriti di Mercato")
+st.sidebar.markdown("*Se metti zero, ti stai mentendo da solo.*")
+with st.sidebar.expander("💰 Costi di Transazione", expanded=True):
+    ui_spread = st.number_input("Bid-Ask Spread (%)", min_value=0.0, max_value=5.0, value=0.5, step=0.1) / 100
+    ui_comm = st.number_input("Commissioni Broker (%)", min_value=0.0, max_value=2.0, value=0.1, step=0.05) / 100
+with st.sidebar.expander("📊 Dividend Yield", expanded=True):
+    ui_div = st.number_input("Rendimento Dividendi (%)", min_value=0.0, max_value=10.0, value=1.5, step=0.1) / 100
+
+st.title("🏦 Dashboard Copertura Istituzionale (v4.5)")
+
+st.markdown('<div class="risk-toggle">', unsafe_allow_html=True)
+is_real_ratio = st.toggle("🛡️ **Modalità Risk Manager (Hedge Ratio Netto dei Costi)**", value=True)
+st.markdown('</div>', unsafe_allow_html=True)
+
+tab1, tab2, tab3 = st.tabs(["🎯 Setup & Matrice di Sensitività", "📈 Backtest & Rischio FX", "🔍 Database Live BNP Paribas"])
 
 # ======================================================================
-# TAB 1, 2, 3 (Codice Precedente Consolidato)
+# TAB 1: CALCOLATORE E MATRICE
 # ======================================================================
 with tab1:
     with st.form("input_form"):
         col1, col2, col3 = st.columns(3)
         with col1:
-            st.markdown("### ⚙️ Derivato")
+            st.markdown("### ⚙️ Derivato (Turbo)")
+            
             cert = st.session_state.get('selected_cert')
-            if cert: st.info(f"ISIN: {cert['isin']}")
-            p_iniziale = st.number_input("Prezzo Lettera (€)", value=cert['prezzo'] if cert else 7.64)
-            strike = st.number_input("Strike", value=cert['strike'] if cert else 7505.97)
-            cambio = st.number_input("Cambio", value=1.15)
+            if cert:
+                st.markdown(f"<div style='background-color:#E8F5E9; color:#2E7D32; padding:5px 10px; border-radius:5px; font-weight:bold; margin-bottom:10px;'>📡 ISIN Caricato: {cert['isin']}</div>", unsafe_allow_html=True)
+            
+            p_iniziale = st.number_input("Prezzo Lettera (€)", value=cert['prezzo'] if cert else 7.64, step=0.01)
+            strike = st.number_input("Strike", value=cert['strike'] if cert else 7505.97, step=0.01)
+            cambio = st.number_input("Tasso di cambio EUR", value=1.15, step=0.01)
             multiplo = st.number_input("Multiplo", value=cert['multiplo'] if cert else 0.01, format="%.4f")
             euribor = st.number_input("Euribor 12M", value=0.02456, format="%.5f")
+            
         with col2:
             st.markdown("### 📉 Mercato")
-            v_iniziale = st.number_input("Indice Spot", value=6670.75)
-            v_ipotetico = st.number_input("Target Scenario", value=6000.0)
-            giorni = st.number_input("Giorni", value=60)
+            v_iniziale = st.number_input("Indice Iniziale Spot", value=6670.75, step=0.01)
+            v_ipotetico = st.number_input("Scenario Futuro Target", value=6000.0, step=0.01)
+            giorni = st.number_input("Orizzonte Hedging (Giorni)", value=60, step=1)
+            
         with col3:
             st.markdown("### 💼 Portafoglio")
-            ptf = st.number_input("Capitale (€)", value=200000.0)
-            beta = st.number_input("Beta", value=1.0)
-        
+            ptf = st.number_input("Capitale Ptf (€)", value=200000.0, step=1000.0)
+            beta = st.number_input("Beta", value=1.00, step=0.05)
+            
         st.divider()
-        tipo_copertura = st.radio("Ottimizzazione", ["Auto", "Manuale"], horizontal=True)
-        n_turbo_manual = st.number_input("Q.tà Manuale", value=1000) if tipo_copertura == "Manuale" else None
+        st.markdown("### 🎯 Ottimizzazione Copertura")
+        tipo_copertura = st.radio("Strategia di Hedging", ["Auto-Ottimizza (Delta Neutral 100%)", "Manuale (Forza Quantità)"], horizontal=True)
         
-        submitted = st.form_submit_button("🔥 Calcola")
+        if tipo_copertura == "Manuale (Forza Quantità)":
+            n_turbo_custom = st.number_input("Numero esatto di Certificati da acquistare", value=1000, step=10)
+        else:
+            n_turbo_custom = None
+            
+        submitted = st.form_submit_button("🔥 Esegui Motore Quantitativo")
 
     if submitted:
-        params = TurboParameters(p_iniziale, strike, cambio, multiplo, euribor, v_iniziale, v_ipotetico, giorni, ptf, beta, ui_div, ui_spread, ui_comm)
+        params = TurboParameters(prezzo_iniziale=p_iniziale, strike=strike, cambio=cambio, multiplo=multiplo, euribor=euribor, valore_iniziale=v_iniziale, valore_ipotetico=v_ipotetico, giorni=giorni, portafoglio=ptf, beta=beta, dividend_yield=ui_div, bid_ask_spread=ui_spread, commissioni_pct=ui_comm)
         calc = DeterministicTurboCalculator(params)
         res = calc.calculate_all()
-        if n_turbo_manual: res['n_turbo'] = float(n_turbo_manual) # Override
-        st.session_state['res'], st.session_state['params'] = res, params
+        
+        # INTERCETTAZIONE MANUALE
+        if n_turbo_custom is not None:
+            res['n_turbo'] = float(n_turbo_custom)
+            costo_singolo_turbo = params.prezzo_iniziale * (1 + ui_spread + ui_comm)
+            res['capitale'] = params.portafoglio + (res['n_turbo'] * costo_singolo_turbo)
+            
+            valore_turbo_scadenza = res['prezzo_futuro'] * (1 - ui_spread - ui_comm)
+            res['valore_copertura_simulata'] = res['n_turbo'] * valore_turbo_scadenza
+            
+            res['totale_simulato'] = res['valore_ptf_simulato'] + res['valore_copertura_simulata']
+            res['percentuale'] = (res['totale_simulato'] - res['capitale']) / res['capitale']
+            
+            perdita_ptf = params.portafoglio - res['valore_ptf_simulato']
+            gain_turbo_lordo = res['n_turbo'] * (res['prezzo_futuro'] - params.prezzo_iniziale)
+            gain_turbo_netto = res['valore_copertura_simulata'] - (res['n_turbo'] * costo_singolo_turbo)
+            
+            if perdita_ptf > 0:
+                res['hedge_ratio_commerciale'] = gain_turbo_lordo / perdita_ptf
+                res['hedge_ratio_reale'] = gain_turbo_netto / perdita_ptf
+            else:
+                res['hedge_ratio_commerciale'] = 0.0
+                res['hedge_ratio_reale'] = 0.0
+                
+            res['totale_copertura'] = res['capitale']
+
+        st.session_state['barriera_calcolata'] = res['barriera']
+        st.session_state['params'] = params
+        st.session_state['res'] = res
 
     if 'res' in st.session_state:
-        res, params = st.session_state['res'], st.session_state['params']
-        # Grafico Payoff e Matrice (Omesse qui per brevità, ma incluse nel tuo file completo)
-        st.write("### Risultato Sintetico")
-        st.metric("Hedge Ratio Reale", f"{res['hedge_ratio_reale']*100:.1f}%")
-        # [INSERIRE QUI TUTTE LE TABELLE DELLA V4.5]
+        res = st.session_state['res']
+        params = st.session_state['params']
+        
+        st.divider()
+        st.markdown("<h2>📊 Risultati della Copertura</h2>", unsafe_allow_html=True)
+        excel_col1, excel_col2, excel_col3 = st.columns([1, 1, 1.3])
+        
+        with excel_col1:
+            st.markdown("<div style='background-color: #2c5282; padding: 12px; border-radius: 5px; text-align: center; margin-bottom: 15px;'><h4 style='margin: 0; color: white; font-size: 16px;'>CARATTERISTICHE TURBO SHORT</h4></div>", unsafe_allow_html=True)
+            st.markdown(f"""
+            <table style='width: 100%; border-collapse: collapse; font-size: 14px;'>
+            <tr style='background-color: #F8F9FA;'><td style='padding: 8px; border: 1px solid #dee2e6;'><strong>Prezzo iniziale</strong></td><td style='padding: 8px; border: 1px solid #dee2e6; text-align: right;'>{params.prezzo_iniziale:.2f} €</td></tr>
+            <tr><td style='padding: 8px; border: 1px solid #dee2e6;'><strong>Fair Value (Adj. Div)</strong></td><td style='padding: 8px; border: 1px solid #dee2e6; text-align: right; color: #2c5282; font-weight: bold;'>{res['fair_value']:.4f} €</td></tr>
+            <tr style='background-color: #F8F9FA;'><td style='padding: 8px; border: 1px solid #dee2e6;'><strong>Premio</strong></td><td style='padding: 8px; border: 1px solid #dee2e6; text-align: right;'>{res['premio']:.4f} €</td></tr>
+            <tr><td style='padding: 8px; border: 1px solid #dee2e6;'><strong>Strike</strong></td><td style='padding: 8px; border: 1px solid #dee2e6; text-align: right;'>{params.strike:.2f}</td></tr>
+            <tr style='background-color: #F8F9FA;'><td style='padding: 8px; border: 1px solid #dee2e6;'><strong>Tasso di cambio</strong></td><td style='padding: 8px; border: 1px solid #dee2e6; text-align: right;'>{params.cambio:.2f}</td></tr>
+            <tr><td style='padding: 8px; border: 1px solid #dee2e6;'><strong>Multiplo</strong></td><td style='padding: 8px; border: 1px solid #dee2e6; text-align: right;'>{params.multiplo:.4f}</td></tr>
+            </table>
+            """, unsafe_allow_html=True)
 
+        with excel_col2:
+            st.markdown("<div style='background-color: #2c5282; padding: 12px; border-radius: 5px; text-align: center; margin-bottom: 15px;'><h4 style='margin: 0; color: white; font-size: 16px;'>INDICE DA COPRIRE</h4></div>", unsafe_allow_html=True)
+            st.markdown(f"""
+            <table style='width: 100%; border-collapse: collapse; font-size: 14px;'>
+            <tr style='background-color: #F8F9FA;'><td style='padding: 8px; border: 1px solid #dee2e6;'><strong>Valore Iniziale</strong></td><td style='padding: 8px; border: 1px solid #dee2e6; text-align: right;'>{params.valore_iniziale:.2f}</td></tr>
+            <tr><td style='padding: 8px; border: 1px solid #dee2e6;'><strong>Valore Ipotetico</strong></td><td style='padding: 8px; border: 1px solid #dee2e6; text-align: right; color: #c62828; font-weight: bold;'>{params.valore_ipotetico:.2f}</td></tr>
+            <tr style='background-color: #F8F9FA;'><td style='padding: 8px; border: 1px solid #dee2e6;'><strong>Giorni</strong></td><td style='padding: 8px; border: 1px solid #dee2e6; text-align: right;'>{params.giorni}</td></tr>
+            <tr><td style='padding: 8px; border: 1px solid #dee2e6;'><strong>Prezzo Turbo Futuro</strong></td><td style='padding: 8px; border: 1px solid #dee2e6; text-align: right; color: #2c5282; font-weight: bold;'>{res['prezzo_futuro']:.4f} €</td></tr>
+            <tr style='background-color: #F8F9FA;'><td style='padding: 8px; border: 1px solid #dee2e6;'><strong>Barriera</strong></td><td style='padding: 8px; border: 1px solid #dee2e6; text-align: right;'>{res['barriera']:.2f}</td></tr>
+            </table>
+            """, unsafe_allow_html=True)
+
+        with excel_col3:
+            st.markdown("<div style='background-color: #2c5282; padding: 12px; border-radius: 5px; text-align: center; margin-bottom: 15px;'><h4 style='margin: 0; color: white; font-size: 16px;'>PORTAFOGLIO DA COPRIRE</h4></div>", unsafe_allow_html=True)
+            st.markdown(f"<div style='text-align: right; font-size: 24px; font-weight: bold; color: #2c5282; margin-bottom: 20px; padding: 10px; background-color: #F8F9FA; border-radius: 5px;'>{params.portafoglio:,.2f} €</div>", unsafe_allow_html=True)
+            
+            st.markdown(f"""
+            <table style='width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 14px;'>
+            <tr style='background-color: #F8F9FA;'><td style='padding: 8px; border: 1px solid #dee2e6;'><strong>N. Turbo Short</strong></td><td style='padding: 8px; border: 1px solid #dee2e6; text-align: right;'>{res['n_turbo']:,.2f}</td><td rowspan='2' style='padding: 8px; border: 1px solid #dee2e6; text-align: center; vertical-align: middle; background-color: #E3F2FD; font-weight: bold;'>TOTALE CON<br/>COPERTURA</td></tr>
+            <tr><td style='padding: 8px; border: 1px solid #dee2e6;'><strong>Capitale Iniziale + Costi</strong></td><td style='padding: 8px; border: 1px solid #dee2e6; text-align: right;'>{res['capitale']:,.2f} €</td></tr>
+            <tr style='background-color: #FFF3E0;'><td colspan='2' style='padding: 8px; border: 1px solid #dee2e6; text-align: right; font-weight: bold;'></td><td style='padding: 8px; border: 1px solid #dee2e6; text-align: center; color: #E65100; font-weight: bold; font-size: 16px;'>{res['totale_copertura']:,.2f} €</td></tr>
+            </table>
+            """, unsafe_allow_html=True)
+            
+            st.markdown("<div style='background-color: #E3F2FD; padding: 10px; border-radius: 5px; text-align: center; margin-top: 20px; margin-bottom: 10px;'><strong style='color: #0D47A1;'>VALORE PORTAFOGLIO SIMULATO</strong></div>", unsafe_allow_html=True)
+            st.markdown(f"""
+            <table style='width: 100%; border-collapse: collapse; font-size: 14px;'>
+            <tr style='background-color: #F8F9FA;'><td style='padding: 8px; border: 1px solid #dee2e6;'></td><td style='padding: 8px; border: 1px solid #dee2e6; text-align: right; font-weight: bold;'>VALORE COPERTURA</td></tr>
+            <tr><td style='padding: 8px; border: 1px solid #dee2e6;'><strong>Portafoglio</strong></td><td style='padding: 8px; border: 1px solid #dee2e6; text-align: right;'>{res['valore_ptf_simulato']:,.2f} €</td></tr>
+            <tr style='background-color: #F8F9FA;'><td style='padding: 8px; border: 1px solid #dee2e6;'><strong>Turbo (Netto Scarti di Uscita)</strong></td><td style='padding: 8px; border: 1px solid #dee2e6; text-align: right; color: #2E7D32; font-weight: bold;'>{res['valore_copertura_simulata']:,.2f} €</td></tr>
+            <tr style='height: 10px;'><td colspan='2' style='border: none;'></td></tr>
+            <tr style='background-color: #E3F2FD;'><td style='padding: 8px; border: 1px solid #dee2e6;'><strong>TOTALE FINALE</strong></td><td style='padding: 8px; border: 1px solid #dee2e6; text-align: right; font-weight: bold; font-size: 16px;'>{res['totale_simulato']:,.2f} €</td></tr>
+            </table>
+            """, unsafe_allow_html=True)
+            
+            perf = res['percentuale'] * 100
+            perf_bg, perf_color, perf_sign = ('#E8F5E9', '#2E7D32', '+') if perf >= 0 else ('#FFEBEE', '#C62828', '')
+            st.markdown(f"<div style='background-color: {perf_bg}; padding: 20px; border-radius: 5px; text-align: center; border: 3px solid {perf_color}; margin-top: 15px;'><div style='font-size: 42px; font-weight: bold; color: {perf_color}; line-height: 1;'>{perf_sign}{perf:.2f}%</div><div style='color: #666; font-size: 12px; margin-top: 8px; font-weight: 600;'>PERFORMANCE NETTA COPERTA</div></div>", unsafe_allow_html=True)
+
+        st.divider()
+        hr_val = (res['hedge_ratio_reale'] if is_real_ratio else res['hedge_ratio_commerciale']) * 100
+        label_hr = "Hedge Ratio (Reale al netto dei costi)" if is_real_ratio else "Hedge Ratio (Commerciale/Lordo)"
+        
+        col_diag1, col_diag2 = st.columns([1, 2])
+        with col_diag1:
+            st.metric(label=f"🛡️ {label_hr}", value=f"{hr_val:.1f}%")
+            if not is_real_ratio:
+                st.caption("⚠️ *Stai ignorando gli attriti di mercato. L'over-confidence uccide i portafogli.*")
+                
+        with col_diag2:
+            is_ko = params.valore_ipotetico >= res['barriera']
+            if is_ko:
+                st.error("**🚨 VERDETTO: KNOCK-OUT**\n\nIl derivato è stato distrutto.")
+            elif hr_val >= 90:
+                st.success(f"**✅ VERDETTO: HEDGE CHIRURGICO**\n\nIl derivato compensa il {hr_val:.1f}% del drawdown reale.")
+            elif hr_val >= 50:
+                st.warning(f"**⚠️ VERDETTO: SOTTOCOPERTURA**\n\nAssorbi solo il {hr_val:.1f}% delle perdite.")
+            else:
+                st.error(f"**❌ VERDETTO: SPRECO DI CAPITALE**\n\nCopertura inefficace. Sei esposto al crollo.")
+
+        # --- MATRICE DI SENSITIVITÀ ---
+        st.divider()
+        st.markdown("### 🌡️ Matrice di Sensitività (Prezzo Turbo Short)")
+        st.markdown("Cosa succede al prezzo del tuo derivato al variare dello Spot e col passare dei giorni. Il rosso scuro indica la zona di Knock-Out (distruzione del capitale).")
+        
+        var_list = [-0.20, -0.10, -0.05, 0.0, 0.05, 0.10, 0.20]
+        col_names = [f"{v*100:+.0f}%" for v in var_list]
+        spot_levels = [params.valore_iniziale * (1 + v) for v in var_list]
+        
+        t_steps = [0]
+        if params.giorni > 30: t_steps.extend([int(params.giorni / 3), int(params.giorni * 2 / 3)])
+        elif params.giorni > 10: t_steps.append(int(params.giorni / 2))
+        if params.giorni > 0: t_steps.append(params.giorni)
+        t_steps = sorted(list(set(t_steps)))
+        
+        matrix_data_float = []
+        for t in t_steps:
+            row = []
+            for s in spot_levels:
+                if s >= res['barriera']:
+                    row.append(0.0) 
+                else:
+                    intrinsic = max(0, (params.strike - s) / params.cambio * params.multiplo)
+                    decay_per_day = res['premio'] / params.giorni if params.giorni > 0 else 0
+                    time_value = max(0, res['premio'] - (decay_per_day * t))
+                    row.append(intrinsic + time_value)
+            matrix_data_float.append(row)
+            
+        df_sens = pd.DataFrame(matrix_data_float, columns=col_names, index=[f"Oggi" if t==0 else f"T+{t} gg" for t in t_steps])
+        st.dataframe(df_sens.style.format("{:.3f} €").background_gradient(cmap='RdYlGn', axis=None, vmin=0.0), use_container_width=True)
+
+        st.divider()
+        chart_col1, chart_col2 = st.columns(2)
+        with chart_col1:
+            df_scenari, livello_barriera = generate_scenario_data(st.session_state['params'])
+            st.plotly_chart(plot_payoff_profile(df_scenari, st.session_state['params'].valore_iniziale, livello_barriera), use_container_width=True)
+        with chart_col2:
+            st.plotly_chart(plot_pl_waterfall(st.session_state['res']), use_container_width=True)
+
+# ======================================================================
+# TAB 2: BACKTEST STORICO E GRAFICI
+# ======================================================================
+with tab2:
+    st.markdown("### 🕰️ Macchina del Tempo: Backtest Storico")
+    st.markdown("Verifica come la struttura si sarebbe comportata nel passato. Un modello che non sopravvive alla storia è un modello morto.")
+    
+    if 'barriera_calcolata' not in st.session_state:
+        st.warning("⚠️ Calcola prima la struttura base nel Tab 'Setup & Matrice di Sensitività'.")
+    else:
+        with st.expander("⚙️ Parametri di Simulazione", expanded=True):
+            b_col1, b_col2, b_col3, b_col4, b_col5 = st.columns(5)
+            ticker_ptf = b_col1.text_input("Ticker Ptf", value="SPY", help="L'asset da proteggere")
+            ticker_idx = b_col2.text_input("Ticker Indice", value="^GSPC", help="Sottostante del Turbo")
+            ticker_fx = b_col3.text_input("Rischio Cambio", value="", help="Es. EURUSD=X (Vuoto se assente)")
+            start_date = b_col4.date_input("Inizio", value=datetime.date(2023, 1, 1))
+            end_date = b_col5.date_input("Fine", value=datetime.date.today())
+        
+        if st.button("🚀 Esegui Stress Test Storico", type="primary"):
+            with st.spinner("Allineamento serie storiche, calcolo FX e simulazione barriere in corso..."):
+                df_bt, msg, diagnosis = run_historical_backtest(ticker_ptf, ticker_idx, ticker_fx, start_date, end_date, st.session_state['barriera_calcolata'])
+                
+                if df_bt is not None:
+                    # VERDETTO IN ALTO
+                    st.divider()
+                    st.markdown("### ⚖️ Verdetto del Risk Manager")
+                    if diagnosis['color'] == 'error':
+                        st.error(f"**🚨 {diagnosis['title']}**\n\n{diagnosis['body']}\n\n**Azione Richiesta:** {diagnosis['action']}")
+                    elif diagnosis['color'] == 'warning':
+                        st.warning(f"**⚠️ {diagnosis['title']}**\n\n{diagnosis['body']}\n\n**Azione Richiesta:** {diagnosis['action']}")
+                    else:
+                        st.success(f"**✅ {diagnosis['title']}**\n\n{diagnosis['body']}\n\n**Azione Richiesta:** {diagnosis['action']}")
+                    
+                    # GRAFICI DINAMICI
+                    st.markdown("### 📈 Dinamica Storica")
+                    chart_col1, chart_col2 = st.columns(2)
+                    
+                    with chart_col1:
+                        st.markdown(f"**Andamento Asset: {ticker_ptf}**")
+                        chart_cols = ['Ptf_Close']
+                        if ticker_fx and 'Ptf_Base_Currency' in df_bt.columns: 
+                            chart_cols.append('Ptf_Base_Currency')
+                        st.line_chart(df_bt.set_index('Date')[chart_cols])
+                            
+                    with chart_col2:
+                        if 'Drawdown' in df_bt.columns:
+                            st.markdown(f"**Drawdown Indice: {ticker_idx} (%)**")
+                            st.area_chart(df_bt.set_index('Date')['Drawdown'])
+                        elif 'Beta_60d' in df_bt.columns:
+                            st.markdown("**Evoluzione Beta (60gg)**")
+                            st.line_chart(df_bt.set_index('Date')['Beta_60d'])
+                    
+                    # DATI E PDF NASCOSTI PER PULIZIA VISIVA
+                    with st.expander("🔍 Esplora Dati Grezzi e Scarica Report", expanded=False):
+                        pdf_bytes = generate_pdf_report(df_bt, ticker_ptf, ticker_idx, ticker_fx, st.session_state['barriera_calcolata'], diagnosis)
+                        st.download_button("📄 Scarica Report Risk Management (PDF)", data=pdf_bytes, file_name=f"Hedge_Report_{ticker_ptf}.pdf", mime="application/pdf")
+                        
+                        cols_to_show = ['Date', 'Ptf_Close']
+                        if ticker_fx and 'Ptf_Base_Currency' in df_bt.columns: cols_to_show.append('Ptf_Base_Currency')
+                        for c in ['Idx_High', 'Drawdown', 'Hedge_Signal', 'Knock_Out_Event', 'Beta_60d']:
+                            if c in df_bt.columns: cols_to_show.append(c)
+                        
+                        st.dataframe(df_bt[cols_to_show].sort_values('Date', ascending=False).head(50), use_container_width=True)
+                else:
+                    st.error(f"Errore durante il backtest: {msg}")
+
+# ======================================================================
+# TAB 3: DATABASE LIVE BNP PARIBAS
+# ======================================================================
 with tab3:
-    st.header("🔍 Database Live")
+    st.markdown("### ⚡ Interrogazione API BNP Paribas")
+    st.markdown("Cerca e clicca su un certificato per importare automaticamente i dati nel calcolatore.")
+    
     df_raw = fetch_live_certificates()
-    if not df_raw.empty:
-        st.dataframe(df_raw, use_container_width=True)
+    if "Errore" in df_raw.columns:
+        st.error(df_raw["Errore"].iloc[0])
+    else:
+        col1, col2, col3 = st.columns(3)
+        
+        with col1: 
+            lista_sottostanti = ["Tutti"] + sorted([str(x) for x in df_raw['Sottostante'].dropna().unique()])
+            scelta_sott = st.selectbox("Sottostante BNP", lista_sottostanti)
+            
+        with col2: 
+            categorie_fisse = ["Tutte le categorie", "Azioni", "ETF", "Indici", "Materie prime", "Tassi di interesse", "Valute", "Volatility"]
+            scelta_cat = st.selectbox("Classe Sottostante", categorie_fisse)
+            
+        with col3: 
+            ricerca_libera = st.text_input("Ricerca (es. ISIN):")
+        
+        df_filtered = df_raw.copy()
+        if scelta_sott != "Tutti": 
+            df_filtered = df_filtered[df_filtered['Sottostante'] == scelta_sott]
+        if scelta_cat != "Tutte le categorie": 
+            df_filtered = df_filtered[df_filtered['Classe'] == scelta_cat]
+        if ricerca_libera: 
+            df_filtered = df_filtered[df_filtered.astype(str).apply(lambda x: x.str.contains(ricerca_libera, case=False)).any(axis=1)]
+        
+        colonne_visibili = ['Sottostante', 'ISIN', 'Tipo', 'Classe', 'Scadenza', 'Strike', 'Multiplo', 'Leva', 'Distanza Barriera %', 'Denaro', 'Lettera']
+        df_visibile = df_filtered[[c for c in colonne_visibili if c in df_filtered.columns]]
+        
+        st.markdown(f"**Certificati Short Disponibili:** {len(df_visibile)}")
+        selection = st.dataframe(df_visibile, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row")
+        
+        if len(selection.selection.rows) > 0:
+            certificato = df_visibile.iloc[selection.selection.rows[0]]
+            prezzo_val = certificato.get('Lettera', certificato.get('Denaro', 0.0))
+            if pd.isna(prezzo_val): prezzo_val = 0.0
+            
+            st.session_state['selected_cert'] = {
+                "isin": certificato.get('ISIN', "N/D"),
+                "strike": float(certificato.get('Strike', 0.0)),
+                "multiplo": float(certificato.get('Multiplo', 0.0)),
+                "prezzo": float(prezzo_val)
+            }
+            st.success(f"✅ Dati agganciati per ISIN: {st.session_state['selected_cert']['isin']}")
+            
+            if st.button("🔄 Conferma e Ricarica Setup Copertura", type="primary"):
+                st.rerun()
