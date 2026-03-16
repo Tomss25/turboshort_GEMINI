@@ -2,38 +2,58 @@ import streamlit as st
 from calculator import TurboParameters, DeterministicTurboCalculator
 from charts import generate_scenario_data, plot_payoff_profile
 from stress_test import run_stress_test
-from backtest import run_historical_backtest
+from backtest import run_historical_backtest, generate_pdf_report
 import datetime
 
-st.set_page_config(page_title="Turbo Hedge Quant", layout="wide")
-st.title("📊 Turbo Hedge Quant Dashboard v2.0")
+# --- INIEZIONE CSS CORPORATE ---
+st.set_page_config(page_title="Turbo Hedge Quant", layout="wide", page_icon="🏦")
+st.markdown("""
+<style>
+    .stApp { background-color: #F4F7F6; }
+    h1, h2, h3 { color: #1A365D; font-family: 'Helvetica Neue', sans-serif; }
+    div[data-testid="stForm"] { background-color: #FFFFFF; border-radius: 10px; padding: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); border: none; }
+    .stTabs [data-baseweb="tab-list"] { background-color: transparent; }
+    .stTabs [data-baseweb="tab"] { background-color: #E2E8F0; border-radius: 8px 8px 0 0; border: none; }
+    .stTabs [aria-selected="true"] { background-color: #1A365D !important; color: white !important; }
+    div[data-testid="stMetricValue"] { color: #2B6CB0; font-weight: bold; }
+    .risk-toggle { background-color: #FFFFFF; padding: 15px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); margin-bottom: 20px; border-left: 5px solid #1A365D; }
+</style>
+""", unsafe_allow_html=True)
 
-tab1, tab2 = st.tabs(["🎯 Dimensionamento Copertura", "📈 Backtesting Storico"])
+st.title("🏦 Dashboard Copertura Istituzionale (v2.0)")
+
+# --- IL TOGGLE DI REALTÀ (Fuori dal form per reattività immediata) ---
+st.markdown('<div class="risk-toggle">', unsafe_allow_html=True)
+is_real_ratio = st.toggle(
+    "🛡️ **Modalità Risk Manager (Hedge Ratio Netto)**", 
+    value=True, 
+    help="ATTIVO: Mostra la percentuale di perdita coperta SOTTRAENDO il costo iniziale pagato per il Turbo. DISATTIVO: Mostra la metrica commerciale lorda (pericolosa, sovrastima la protezione)."
+)
+st.markdown('</div>', unsafe_allow_html=True)
+
+tab1, tab2 = st.tabs(["🎯 Setup Copertura & Stress Test", "📈 Backtest & Reportistica"])
 
 with tab1:
     with st.form("input_form"):
         col1, col2, col3 = st.columns(3)
-        
         with col1:
-            st.markdown("**Caratteristiche Turbo**")
+            st.markdown("### ⚙️ Derivato (Turbo)")
             p_iniziale = st.number_input("Prezzo iniziale (€)", value=7.64, step=0.01)
             strike = st.number_input("Strike", value=7505.97, step=0.01)
             cambio = st.number_input("Tasso di cambio", value=1.15, step=0.01)
             multiplo = st.number_input("Multiplo", value=0.01, format="%.3f")
             euribor = st.number_input("Euribor 12M", value=0.02456, format="%.5f")
-            
         with col2:
-            st.markdown("**Indice**")
-            v_iniziale = st.number_input("Valore Iniziale", value=6670.75, step=0.01)
-            v_ipotetico = st.number_input("Valore Ipotetico", value=6000.0, step=0.01)
-            giorni = st.number_input("Giorni", value=60, step=1)
-            
+            st.markdown("### 📉 Mercato")
+            v_iniziale = st.number_input("Indice Iniziale", value=6670.75, step=0.01)
+            v_ipotetico = st.number_input("Scenario Futuro", value=6000.0, step=0.01)
+            giorni = st.number_input("Orizzonte (Giorni)", value=60, step=1)
         with col3:
-            st.markdown("**Portafoglio**")
-            ptf = st.number_input("Portafoglio (€)", value=200000.0, step=1000.0)
-            beta = st.number_input("Beta Portafoglio", value=1.00, step=0.05)
+            st.markdown("### 💼 Portafoglio")
+            ptf = st.number_input("Capitale Ptf (€)", value=200000.0, step=1000.0)
+            beta = st.number_input("Beta", value=1.00, step=0.05)
             
-        submitted = st.form_submit_button("Esegui Calcolo", type="primary")
+        submitted = st.form_submit_button("Esegui Motore Quantitativo")
 
     if submitted:
         params = TurboParameters(
@@ -41,64 +61,66 @@ with tab1:
             multiplo=multiplo, euribor=euribor, valore_iniziale=v_iniziale,
             valore_ipotetico=v_ipotetico, giorni=giorni, portafoglio=ptf, beta=beta
         )
-        
         calc = DeterministicTurboCalculator(params)
         res = calc.calculate_all()
         
         st.session_state['barriera_calcolata'] = res['barriera']
+        st.session_state['params'] = params # Salviamo per il ricalcolo passivo
+        st.session_state['res'] = res
+
+    # Se i risultati esistono in memoria (mostra le metriche che reagiscono al toggle)
+    if 'res' in st.session_state:
+        res = st.session_state['res']
         
-        st.divider()
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("Fair Value", f"€ {res['fair_value']:.4f}")
-        c2.metric("Barriera Turbo", f"{res['barriera']:.2f}")
+        c2.metric("Barriera K.O.", f"{res['barriera']:.2f}")
         c3.metric("N. Turbo (Beta Adj)", f"{res['n_turbo']:.2f}")
-        c4.metric("Capitale Investito", f"€ {res['capitale']:,.2f}")
+        c4.metric("Capitale Rischio", f"€ {res['capitale']:,.2f}")
         
         st.divider()
-        st.subheader("Risultato Simulato a Scadenza")
-        r1, r2, r3 = st.columns(3)
-        r1.metric("Valore Ptf Simulato", f"€ {res['valore_ptf_simulato']:,.2f}")
-        r2.metric("Valore Copertura", f"€ {res['valore_copertura_simulata']:,.2f}")
+        st.markdown("### 📊 Efficacia della Copertura a Scadenza")
+        
+        r1, r2, r3, r4 = st.columns(4)
+        r1.metric("P&L Ptf Nudo", f"€ {res['pl_portafoglio']:,.2f}")
+        
+        # Logica reattiva basata sul Toggle
+        if is_real_ratio:
+            r2.metric("P&L Copertura (Netto)", f"€ {res['pl_turbo_netto']:,.2f}")
+            hr_val = res['hedge_ratio_reale'] * 100
+            label_hr = "Hedge Ratio (Reale)"
+        else:
+            r2.metric("P&L Copertura (Lordo)", f"€ {res['pl_turbo_lordo']:,.2f}")
+            hr_val = res['hedge_ratio_commerciale'] * 100
+            label_hr = "Hedge Ratio (Illusorio)"
+            
+        if res['pl_portafoglio'] >= 0:
+            r3.warning("N/A (Indice in rialzo)")
+        elif hr_val >= 90:
+            r3.success(f"🎯 {label_hr}: {hr_val:.1f}%")
+        elif hr_val >= 50:
+            r3.warning(f"⚠️ {label_hr}: {hr_val:.1f}%")
+        else:
+            r3.error(f"🚨 {label_hr}: {hr_val:.1f}%")
+            
         color = "normal" if res['percentuale'] >= 0 else "inverse"
-        r3.metric("Performance Netta", f"{res['percentuale'] * 100:.2f}%", delta_color=color)
+        r4.metric("Rendimento Netto Totale", f"{res['percentuale'] * 100:.2f}%", delta_color=color)
 
         st.divider()
-        mostra_rischio = st.checkbox(
-            "🔍 Mostra Metriche Avanzate di Rischio (Hedge Ratio Reale)", 
-            value=False,
-            help="Attivando questa spunta il tool smette di lusingarti e calcola l'efficacia reale della tua copertura. Rivela l'esatta percentuale di perdita neutralizzata."
-        )
-        if mostra_rischio:
-            adv1, adv2, adv3 = st.columns(3)
-            adv1.metric("Perdita Ptf", f"€ {res['pl_portafoglio']:,.2f}")
-            adv2.metric("Guadagno Turbo Netto", f"€ {res['pl_turbo']:,.2f}")
-            hr = res['hedge_ratio'] * 100
-            if res['pl_portafoglio'] >= 0:
-                adv3.warning("N/A (Indice in rialzo)")
-            elif hr >= 90:
-                adv3.success(f"🎯 Hedge Ratio: {hr:.1f}%")
-            elif hr >= 50:
-                adv3.warning(f"⚠️ Hedge Ratio: {hr:.1f}% (Sottocoperto)")
-            else:
-                adv3.error(f"🚨 Hedge Ratio: {hr:.1f}% (Inefficace)")
-
-        st.divider()
-        st.subheader("⚠️ Stress Test Discreto Estremo")
-        df_stress = run_stress_test(params)
+        st.subheader("⚠️ Matrice di Stress Estremo")
+        df_stress = run_stress_test(st.session_state['params'])
         st.dataframe(df_stress, use_container_width=True, hide_index=True)
 
-        st.divider()
-        st.subheader("📉 Payoff Continuo a Scadenza")
-        df_scenari, livello_barriera = generate_scenario_data(params)
-        fig = plot_payoff_profile(df_scenari, current_spot=params.valore_iniziale, barriera=livello_barriera)
+        st.subheader("📉 Payoff Continuo")
+        df_scenari, livello_barriera = generate_scenario_data(st.session_state['params'])
+        fig = plot_payoff_profile(df_scenari, current_spot=st.session_state['params'].valore_iniziale, barriera=livello_barriera)
         st.plotly_chart(fig, use_container_width=True)
 
 with tab2:
-    st.markdown("### Simulazione Storica e Beta Rolling (60g)")
-    st.info("Valutazione del rischio su base storica. Verifica i Knock-Out sfruttando i massimi intraday.")
+    st.markdown("### Analisi Storica Event-Driven")
     
     if 'barriera_calcolata' not in st.session_state:
-        st.warning("Per favore, calcola prima la barriera nel Tab 1.")
+        st.warning("Per favore, calcola prima la struttura base nel Tab 1.")
     else:
         b_col1, b_col2, b_col3, b_col4 = st.columns(4)
         ticker_ptf = b_col1.text_input("Ticker Portafoglio", value="SPY")
@@ -106,17 +128,27 @@ with tab2:
         start_date = b_col3.date_input("Inizio", value=datetime.date(2023, 1, 1))
         end_date = b_col4.date_input("Fine", value=datetime.date.today())
         
-        if st.button("Esegui Backtest Veloce", type="primary"):
-            with st.spinner("Estrazione dati, calcolo covarianze e stress barriera..."):
+        if st.button("🚀 Avvia Backtest Quantitativo", type="primary"):
+            with st.spinner("Compilazione dati ed esecuzione logiche di Knock-Out..."):
                 df_bt, msg = run_historical_backtest(
                     ticker_ptf, ticker_idx, start_date, end_date, st.session_state['barriera_calcolata']
                 )
                 
                 if df_bt is not None:
-                    st.success("Analisi quantitativa completata.")
-                    st.write("**Evoluzione del Beta Dinamico**")
+                    st.success("Analisi completata.")
+                    
+                    # Genera PDF in memoria
+                    pdf_bytes = generate_pdf_report(df_bt, ticker_ptf, ticker_idx, st.session_state['barriera_calcolata'])
+                    
+                    # Bottone per scaricare il PDF
+                    st.download_button(
+                        label="📄 Scarica Report Risk Management (PDF)",
+                        data=pdf_bytes,
+                        file_name=f"Hedge_Report_{ticker_ptf}.pdf",
+                        mime="application/pdf"
+                    )
+                    
                     st.line_chart(df_bt.set_index('Date')['Beta_60d'])
-                    st.write("**Log Rischi (Controlla colonna Knock_Out_Event)**")
-                    st.dataframe(df_bt[['Date', 'Ptf_Close', 'Idx_High', 'Drawdown', 'Beta_60d', 'Hedge_Signal', 'Knock_Out_Event']].tail(30), use_container_width=True)
+                    st.dataframe(df_bt[['Date', 'Ptf_Close', 'Idx_High', 'Drawdown', 'Beta_60d', 'Knock_Out_Event']].tail(30), use_container_width=True)
                 else:
                     st.error(f"Errore: {msg}")
