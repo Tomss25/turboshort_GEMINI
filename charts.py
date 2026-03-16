@@ -71,9 +71,42 @@ def plot_payoff_profile(df: pd.DataFrame, current_spot: float, barriera: float) 
     fig.update_layout(
         title='Profilo di Rischio e Rendimento (P&L a Scadenza)',
         xaxis_title='Livello Indice', yaxis_title='Profitto / Perdita (€)',
-        hovermode='x unified', template='plotly_white', height=500,
-        legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01)
+        hovermode='x unified', template='plotly_white', height=450,
+        legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01),
+        margin=dict(l=20, r=20, t=50, b=20)
     )
     fig.add_hline(y=0, line_color="black", line_width=1)
 
+    return fig
+
+def plot_pl_waterfall(res: dict) -> go.Figure:
+    """
+    Scompone chirurgicamente il P&L per mostrare il peso reale degli attriti di mercato.
+    """
+    pl_ptf = res['pl_portafoglio']
+    pl_turbo_lordo = res['pl_turbo_lordo']
+    attriti = res['pl_turbo_netto'] - res['pl_turbo_lordo']
+    pl_netto = pl_ptf + res['pl_turbo_netto']
+
+    fig = go.Figure(go.Waterfall(
+        name="P&L Breakdown", orientation="v",
+        measure=["relative", "relative", "relative", "total"],
+        x=["P&L Ptf Nudo", "Gain Turbo (Lordo)", "Attriti (Spread/Fee)", "P&L Netto Finale"],
+        textposition="outside",
+        text=[f"€ {pl_ptf:,.0f}", f"€ {pl_turbo_lordo:,.0f}", f"€ {attriti:,.0f}", f"€ {pl_netto:,.0f}"],
+        y=[pl_ptf, pl_turbo_lordo, attriti, 0],
+        connector={"line":{"color":"rgb(63, 63, 63)"}},
+        decreasing={"marker":{"color":"#C62828"}}, # Rosso
+        increasing={"marker":{"color":"#2E7D32"}}, # Verde
+        totals={"marker":{"color":"#1A365D"}}      # Blue Navy
+    ))
+
+    fig.update_layout(
+        title="Scomposizione P&L: L'Emorragia dei Costi di Mercato",
+        showlegend=False,
+        template='plotly_white',
+        height=450,
+        margin=dict(l=20, r=20, t=50, b=20)
+    )
+    
     return fig
