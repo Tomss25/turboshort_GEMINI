@@ -24,7 +24,6 @@ class DeterministicTurboCalculator:
         return 0.0 if denominator == 0 else numerator / denominator
 
     def calculate_all(self) -> Dict[str, Any]:
-        # 1. Caratteristiche Turbo
         fair_value = self.safe_divide((self.p.strike - self.p.valore_iniziale) * self.p.multiplo, self.p.cambio)
         fair_value = max(0.0, fair_value)
         premio = max(0.0, self.p.prezzo_iniziale - fair_value)
@@ -32,20 +31,17 @@ class DeterministicTurboCalculator:
         denominatore_leva = self.safe_divide(self.p.prezzo_iniziale * self.p.cambio, self.p.multiplo)
         leva = self.safe_divide(self.p.valore_iniziale, denominatore_leva)
 
-        # 2. Barriera e Prezzo Futuro
         tasso_netto = 1 - self.p.euribor + self.p.spread
         barriera = self.p.strike * math.pow(tasso_netto, self.safe_divide(self.p.giorni, 360))
         
         valore_intrinseco_futuro = self.safe_divide((barriera - self.p.valore_ipotetico) * self.p.multiplo, self.p.cambio)
         prezzo_futuro = max(0.0, valore_intrinseco_futuro + premio)
 
-        # 3. Dimensionamento pesato per il Beta
         esposizione_pesata = self.p.portafoglio * self.p.beta
         n_turbo = self.safe_divide(self.safe_divide(esposizione_pesata, leva), self.p.prezzo_iniziale)
         capitale = n_turbo * self.p.prezzo_iniziale
         totale_copertura = self.p.portafoglio + capitale
         
-        # Simulazione Ptf pesata col Beta
         var_indice = self.safe_divide(self.p.valore_ipotetico - self.p.valore_iniziale, self.p.valore_iniziale)
         var_ptf = var_indice * self.p.beta
         valore_ptf_simulato = self.p.portafoglio * (1 + var_ptf)
@@ -54,10 +50,12 @@ class DeterministicTurboCalculator:
         totale_simulato = valore_ptf_simulato + valore_copertura
         percentuale = self.safe_divide(totale_simulato - totale_copertura, totale_copertura)
 
-        # 4. Hedge Ratio Reale
         pl_portafoglio = valore_ptf_simulato - self.p.portafoglio
-        pl_turbo = valore_copertura - capitale
-        hedge_ratio = self.safe_divide(pl_turbo, abs(pl_portafoglio)) if pl_portafoglio < 0 else 0.0
+        pl_turbo_netto = valore_copertura - capitale
+        pl_turbo_lordo = valore_copertura # L'illusione commerciale
+        
+        hedge_ratio_reale = self.safe_divide(pl_turbo_netto, abs(pl_portafoglio)) if pl_portafoglio < 0 else 0.0
+        hedge_ratio_commerciale = self.safe_divide(pl_turbo_lordo, abs(pl_portafoglio)) if pl_portafoglio < 0 else 0.0
 
         return {
             "fair_value": fair_value,
@@ -73,6 +71,8 @@ class DeterministicTurboCalculator:
             "totale_simulato": totale_simulato,
             "percentuale": percentuale,
             "pl_portafoglio": pl_portafoglio,
-            "pl_turbo": pl_turbo,
-            "hedge_ratio": hedge_ratio
+            "pl_turbo_netto": pl_turbo_netto,
+            "pl_turbo_lordo": pl_turbo_lordo,
+            "hedge_ratio_reale": hedge_ratio_reale,
+            "hedge_ratio_commerciale": hedge_ratio_commerciale
         }
