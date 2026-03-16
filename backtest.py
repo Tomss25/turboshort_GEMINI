@@ -9,7 +9,7 @@ def run_historical_backtest(ticker_ptf: str, ticker_idx: str, start: str, end: s
         idx_data = yf.download(ticker_idx, start=start, end=end, progress=False)[['Close', 'High']]
         
         if ptf_data.empty or idx_data.empty:
-            return None, "Dati non trovati per i ticker specificati."
+            return None, "Dati non trovati per i ticker specificati.", None
 
         df = pd.DataFrame({
             'Ptf_Close': ptf_data.squeeze(),
@@ -33,12 +33,41 @@ def run_historical_backtest(ticker_ptf: str, ticker_idx: str, start: str, end: s
         df['Hedge_Signal'] = df['Hedge_Signal'].ffill().fillna(0)
         df['Hedge_Signal'] = np.where(df['Knock_Out_Event'] == 1, 0, df['Hedge_Signal'])
 
-        return df.reset_index(), "Successo"
+        # --- MOTORE DIAGNOSTICO ---
+        giorni_totali = len(df)
+        giorni_coperti = df['Hedge_Signal'].sum()
+        numero_ko = df['Knock_Out_Event'].sum()
+        perc_copertura = (giorni_coperti / giorni_totali) * 100 if giorni_totali > 0 else 0
+        
+        if numero_ko > 0:
+            diag_color = "error"
+            diag_title = "FALLIMENTO STRUTTURALE (Rischio Rovina)"
+            diag_body = f"La simulazione ha registrato {numero_ko} eventi di Knock-Out sui massimi intraday. Il premio pagato per la copertura è stato interamente bruciato."
+            diag_action = "AZIONE CORRETTIVA: Allontana lo Strike. Stai usando una leva troppo aggressiva che non sopravvive al respiro fisiologico di mercato. Sposta la barriera più in alto e accetta un esborso di capitale maggiore."
+        elif perc_copertura > 40:
+            diag_color = "warning"
+            diag_title = "SOTTOEFFICIENZA (Cash Drag e Over-Hedging)"
+            diag_body = f"Nessun K.O. registrato, ma il portafoglio è rimasto coperto per il {perc_copertura:.1f}% del tempo. Mantenere derivati aperti così a lungo distrugge le performance a causa del funding spread."
+            diag_action = "AZIONE CORRETTIVA: La copertura deve essere chirurgica. Rivedi i trigger sistematici di ingresso (es. copri solo su drawdowns più profondi del -5%)."
+        else:
+            diag_color = "success"
+            diag_title = "ESITO POSITIVO (Copertura Tattica Ottimale)"
+            diag_body = f"Nessun Knock-Out registrato. La permanenza a mercato è stata chirurgica ({perc_copertura:.1f}% del tempo), confermando che la barriera è sufficientemente lontana dal rumore di fondo."
+            diag_action = "RISOLUZIONE: I parametri strutturali del derivato (Strike e Leva) sono solidi per l'orizzonte e il sottostante scelti."
+
+        diagnosis = {
+            "title": diag_title,
+            "body": diag_body,
+            "action": diag_action,
+            "color": diag_color
+        }
+
+        return df.reset_index(), "Successo", diagnosis
         
     except Exception as e:
-        return None, str(e)
+        return None, str(e), None
 
-def generate_pdf_report(df: pd.DataFrame, ticker_ptf: str, ticker_idx: str, barriera: float) -> bytes:
+def generate_pdf_report(df: pd.DataFrame, ticker_ptf: str, ticker_idx: str, barriera: float, diagnosis: dict) -> bytes:
     import tempfile
     import os
     from fpdf import FPDF
@@ -60,40 +89,45 @@ def generate_pdf_report(df: pd.DataFrame, ticker_ptf: str, ticker_idx: str, barr
     pdf.set_font("Helvetica", "", 12)
     pdf.set_text_color(0, 0, 0)
     pdf.cell(0, 8, f"Asset Analizzati: Portafoglio [{ticker_ptf}] vs Indice [{ticker_idx}]", ln=True)
-    pdf.cell(0, 8, f"Periodo: {df['Date'].dt.date.iloc[0]} -> {df['Date'].dt.date.iloc[-1]} ({giorni_totali} giorni di borsa)", ln=True)
-    pdf.cell(0, 8, f"Livello Barriera Analizzato: {barriera:.2f}", ln=True)
+    pdf.cell(0, 8, f"Periodo Analizzato: {df['Date'].dt.date.iloc[0]} -> {df['Date'].dt.date.iloc[-1]}", ln=True)
+    pdf.cell(0, 8, f"Livello Barriera Sotto Stress: {barriera:.2f}", ln=True)
     pdf.ln(10)
     
     pdf.set_font("Helvetica", "B", 14)
     pdf.set_text_color(26, 54, 93)
-    pdf.cell(0, 10, "Metriche di Rischio Storiche", ln=True)
+    pdf.cell(0, 10, "Metriche Storiche", ln=True)
     
     pdf.set_font("Helvetica", "", 12)
     pdf.set_text_color(0, 0, 0)
     pdf.cell(0, 8, f"Max Drawdown Storico: {max_dd:.2f}%", ln=True)
-    pdf.cell(0, 8, f"Tempo trascorso in regime di copertura: {percentuale_copertura:.1f}% del tempo", ln=True)
+    pdf.cell(0, 8, f"Tempo trascorso in copertura: {percentuale_copertura:.1f}% del periodo", ln=True)
     pdf.cell(0, 8, f"Eventi di Knock-Out Registrati (Massimi Intraday): {numero_ko} eventi", ln=True)
-    
     pdf.ln(10)
-    pdf.set_font("Helvetica", "I", 10)
-    pdf.multi_cell(0, 6, txt="NOTA RISK MANAGER: Un numero elevato di Knock-Out indica che lo strike scelto "
-                             "è troppo vicino alla volatilità fisiologica del mercato. Valutare un allontanamento "
-                             "della barriera per evitare l'azzeramento frequente del premio.")
     
-    # --- FIX BULLETPROOF PER STREAMLIT CLOUD ---
-    # Creiamo un file temporaneo sicuro sul server
+    # Iniezione della Diagnosi nel PDF
+    if diagnosis['color'] == 'error':
+        pdf.set_text_color(180, 0, 0) # Rosso
+    elif diagnosis['color'] == 'warning':
+        pdf.set_text_color(200, 100, 0) # Arancione
+    else:
+        pdf.set_text_color(0, 120, 0) # Verde
+        
+    pdf.set_font("Helvetica", "B", 14)
+    pdf.cell(0, 10, f"DIAGNOSI: {diagnosis['title']}", ln=True)
+    pdf.set_text_color(0, 0, 0)
+    pdf.set_font("Helvetica", "", 11)
+    pdf.multi_cell(0, 6, txt=diagnosis['body'])
+    pdf.ln(2)
+    pdf.set_font("Helvetica", "B", 11)
+    pdf.multi_cell(0, 6, txt=diagnosis['action'])
+    
     with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
         tmp_path = tmp.name
         
-    # Costringiamo la libreria a scrivere fisicamente il file su disco
     pdf.output(tmp_path)
     
-    # Leggiamo il file crudo in formato byte immutabile
     with open(tmp_path, "rb") as f:
         pdf_bytes = f.read()
         
-    # Puliamo il server eliminando il file temporaneo
     os.remove(tmp_path)
-    
-    # Restituiamo byte puri che Streamlit accetta al 100%
     return pdf_bytes
