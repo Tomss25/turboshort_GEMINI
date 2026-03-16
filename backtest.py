@@ -39,6 +39,10 @@ def run_historical_backtest(ticker_ptf: str, ticker_idx: str, start: str, end: s
         return None, str(e)
 
 def generate_pdf_report(df: pd.DataFrame, ticker_ptf: str, ticker_idx: str, barriera: float) -> bytes:
+    import tempfile
+    import os
+    from fpdf import FPDF
+    
     giorni_totali = len(df)
     giorni_coperti = df['Hedge_Signal'].sum()
     percentuale_copertura = (giorni_coperti / giorni_totali) * 100
@@ -76,4 +80,20 @@ def generate_pdf_report(df: pd.DataFrame, ticker_ptf: str, ticker_idx: str, barr
                              "è troppo vicino alla volatilità fisiologica del mercato. Valutare un allontanamento "
                              "della barriera per evitare l'azzeramento frequente del premio.")
     
-    return bytes(pdf.output())
+    # --- FIX BULLETPROOF PER STREAMLIT CLOUD ---
+    # Creiamo un file temporaneo sicuro sul server
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+        tmp_path = tmp.name
+        
+    # Costringiamo la libreria a scrivere fisicamente il file su disco
+    pdf.output(tmp_path)
+    
+    # Leggiamo il file crudo in formato byte immutabile
+    with open(tmp_path, "rb") as f:
+        pdf_bytes = f.read()
+        
+    # Puliamo il server eliminando il file temporaneo
+    os.remove(tmp_path)
+    
+    # Restituiamo byte puri che Streamlit accetta al 100%
+    return pdf_bytes
