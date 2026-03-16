@@ -1,37 +1,80 @@
 import streamlit as st
 from calculator import TurboParameters, DeterministicTurboCalculator
-from charts import generate_scenario_data, plot_payoff_profile
+from charts import generate_scenario_data, plot_payoff_profile, plot_pl_waterfall
 from stress_test import run_stress_test
 from backtest import run_historical_backtest, generate_pdf_report
 import datetime
 
 st.set_page_config(page_title="Turbo Hedge Quant", layout="wide", page_icon="🏦")
 
+# --- INIEZIONE CSS CORPORATE AVANZATA ---
 st.markdown("""
 <style>
+    /* Sfondo generale e font */
     .stApp { background-color: #F4F7F6; }
     h1, h2, h3 { color: #1A365D; font-family: 'Helvetica Neue', sans-serif; }
+    
+    /* Box del Form */
     div[data-testid="stForm"] { background-color: #FFFFFF; border-radius: 10px; padding: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); border: none; }
+    
+    /* Tab Styling */
     .stTabs [data-baseweb="tab-list"] { background-color: transparent; }
     .stTabs [data-baseweb="tab"] { background-color: #E2E8F0; border-radius: 8px 8px 0 0; border: none; }
     .stTabs [aria-selected="true"] { background-color: #1A365D !important; color: white !important; }
     div[data-testid="stMetricValue"] { color: #2B6CB0; font-weight: bold; }
+    
+    /* Toggle Risk Manager */
     .risk-toggle { background-color: #FFFFFF; padding: 15px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); margin-bottom: 20px; border-left: 5px solid #1A365D; }
     
+    /* Pulsante Blue Navy */
     div[data-testid="stFormSubmitButton"] button {
-        background-color: #1A365D !important;
-        color: #FFFFFF !important;
-        border: none !important;
-        font-weight: bold !important;
-        padding: 10px 24px !important;
-        border-radius: 6px !important;
+        background-color: #1A365D !important; color: #FFFFFF !important; border: none !important;
+        font-weight: bold !important; padding: 10px 24px !important; border-radius: 6px !important;
     }
-    div[data-testid="stFormSubmitButton"] button:hover {
-        background-color: #2c5282 !important;
+    div[data-testid="stFormSubmitButton"] button:hover { background-color: #2c5282 !important; color: #FFFFFF !important; }
+
+    /* =====================================================================
+       STYLING ESCLUSIVO DELLA SIDEBAR (BLUE NAVY & WHITE CONTRAST)
+       ===================================================================== */
+    [data-testid="stSidebar"] {
+        background-color: #1A365D !important;
+    }
+    /* Testo primario bianco nella sidebar */
+    [data-testid="stSidebar"] .stMarkdown p,
+    [data-testid="stSidebar"] .stMarkdown h1,
+    [data-testid="stSidebar"] .stMarkdown h2,
+    [data-testid="stSidebar"] .stMarkdown h3,
+    [data-testid="stSidebar"] .stMarkdown em {
         color: #FFFFFF !important;
+    }
+    
+    /* Container degli Expander (Sfondo Bianco) */
+    [data-testid="stSidebar"] [data-testid="stExpander"] {
+        background-color: #FFFFFF !important;
+        border-radius: 8px !important;
+        border: none !important;
+        margin-bottom: 12px !important;
+    }
+    /* Testo dentro gli expander (Blue Navy per contrasto) */
+    [data-testid="stSidebar"] [data-testid="stExpander"] p,
+    [data-testid="stSidebar"] [data-testid="stExpander"] label,
+    [data-testid="stSidebar"] [data-testid="stExpander"] div {
+        color: #1A365D !important;
+        font-weight: 500;
+    }
+    /* Sfondo dei campi di input numerici dentro gli expander */
+    [data-testid="stSidebar"] [data-testid="stExpander"] input {
+        background-color: #F4F7F6 !important;
+        color: #000000 !important;
+        border: 1px solid #CBD5E0 !important;
+    }
+    /* Icone SVG dentro l'expander */
+    [data-testid="stSidebar"] [data-testid="stExpander"] svg {
+        stroke: #1A365D !important;
     }
 </style>
 """, unsafe_allow_html=True)
+
 
 # --- SIDEBAR DELLA REALTÀ (ATTRITI) ---
 st.sidebar.header("📉 Attriti di Mercato")
@@ -44,7 +87,7 @@ with st.sidebar.expander("💰 Costi di Transazione", expanded=True):
 with st.sidebar.expander("📊 Dividend Yield", expanded=True):
     ui_div = st.number_input("Rendimento Dividendi (%)", min_value=0.0, max_value=10.0, value=1.5, step=0.1, help="I dividendi abbassano artificialmente il Fair Value del Turbo Short") / 100
 
-st.title("🏦 Dashboard Copertura Istituzionale (v2.0)")
+st.title("🏦 Dashboard Copertura Istituzionale (v2.5)")
 
 st.markdown('<div class="risk-toggle">', unsafe_allow_html=True)
 is_real_ratio = st.toggle(
@@ -187,10 +230,20 @@ with tab1:
         df_stress = run_stress_test(st.session_state['params'])
         st.dataframe(df_stress, use_container_width=True, hide_index=True)
 
-        st.subheader("📉 Payoff Continuo")
-        df_scenari, livello_barriera = generate_scenario_data(st.session_state['params'])
-        fig = plot_payoff_profile(df_scenari, current_spot=st.session_state['params'].valore_iniziale, barriera=livello_barriera)
-        st.plotly_chart(fig, use_container_width=True)
+        st.divider()
+        st.markdown("### 📉 Analisi Visiva: Scenario e Decomposizione P&L")
+        
+        # NUOVO LAYOUT DEI GRAFICI: Payoff Continuo affiancato al Waterfall Chart
+        chart_col1, chart_col2 = st.columns(2)
+        
+        with chart_col1:
+            df_scenari, livello_barriera = generate_scenario_data(st.session_state['params'])
+            fig_payoff = plot_payoff_profile(df_scenari, current_spot=st.session_state['params'].valore_iniziale, barriera=livello_barriera)
+            st.plotly_chart(fig_payoff, use_container_width=True)
+            
+        with chart_col2:
+            fig_waterfall = plot_pl_waterfall(st.session_state['res'])
+            st.plotly_chart(fig_waterfall, use_container_width=True)
 
 with tab2:
     st.markdown("### Analisi Storica e FX Risk")
