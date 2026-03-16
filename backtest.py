@@ -39,7 +39,6 @@ def run_historical_backtest(ticker_ptf: str, ticker_idx: str, start: str, end: s
         return None, str(e)
 
 def generate_pdf_report(df: pd.DataFrame, ticker_ptf: str, ticker_idx: str, barriera: float) -> bytes:
-    """Genera un PDF quantitativo con le statistiche della strategia."""
     giorni_totali = len(df)
     giorni_coperti = df['Hedge_Signal'].sum()
     percentuale_copertura = (giorni_coperti / giorni_totali) * 100
@@ -49,9 +48,8 @@ def generate_pdf_report(df: pd.DataFrame, ticker_ptf: str, ticker_idx: str, barr
     pdf = FPDF()
     pdf.add_page()
     
-    # Intestazione
     pdf.set_font("Helvetica", "B", 16)
-    pdf.set_text_color(26, 54, 93) # Navy Blue
+    pdf.set_text_color(26, 54, 93)
     pdf.cell(0, 10, "Turbo Hedge Quant - Report di Backtest", ln=True, align="C")
     pdf.ln(10)
     
@@ -62,7 +60,6 @@ def generate_pdf_report(df: pd.DataFrame, ticker_ptf: str, ticker_idx: str, barr
     pdf.cell(0, 8, f"Livello Barriera Analizzato: {barriera:.2f}", ln=True)
     pdf.ln(10)
     
-    # Statistiche
     pdf.set_font("Helvetica", "B", 14)
     pdf.set_text_color(26, 54, 93)
     pdf.cell(0, 10, "Metriche di Rischio Storiche", ln=True)
@@ -79,4 +76,4 @@ def generate_pdf_report(df: pd.DataFrame, ticker_ptf: str, ticker_idx: str, barr
                              "è troppo vicino alla volatilità fisiologica del mercato. Valutare un allontanamento "
                              "della barriera per evitare l'azzeramento frequente del premio.")
     
-    return pdf.output()
+    return bytes(pdf.output())
