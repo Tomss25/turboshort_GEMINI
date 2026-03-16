@@ -26,24 +26,17 @@ st.markdown("""
     div[data-testid="stMetricValue"] { color: #2B6CB0; font-weight: bold; }
     .risk-toggle { background-color: #FFFFFF; padding: 15px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); margin-bottom: 20px; border-left: 5px solid #1A365D; }
     div[data-testid="stFormSubmitButton"] button, .action-btn { background-color: #1A365D !important; color: #FFFFFF !important; border: none !important; font-weight: bold !important; padding: 10px 24px !important; border-radius: 6px !important; }
-    div[data-testid="stFormSubmitButton"] button:hover, .action-btn:hover { background-color: #2c5282 !important; color: #FFFFFF !important; }
     [data-testid="stSidebar"] { background-color: #1A365D !important; }
     [data-testid="stSidebarNav"] span, [data-testid="stSidebarNav"] div { color: #FFFFFF !important; font-weight: 600; }
     [data-testid="stSidebarNav"] svg { stroke: #FFFFFF !important; fill: #FFFFFF !important; }
 </style>
 """, unsafe_allow_html=True)
 
-# --- MOTORE ESTRAZIONE DATI BNP (Versione Quant-Grade Anti-Crash) ---
+# --- MOTORE ESTRAZIONE DATI BNP (Versione Blindata Anti-Duplicati) ---
 @st.cache_data(ttl=900)
 def fetch_live_certificates():
     url = "https://investimenti.bnpparibas.it/apiv2/api/v1/productlist/"
-    headers = {
-        "accept": "application/json",
-        "clientid": "1",
-        "content-type": "application/json",
-        "languageid": "it",
-        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
-    }
+    headers = {"accept": "application/json", "clientid": "1", "content-type": "application/json", "languageid": "it", "user-agent": "Mozilla/5.0"}
     payload = {
         "clientId": 1, "languageId": "it", "countryId": "", "sortPreference": [], "filterSelections": [],
         "derivativeTypeIds": [7, 9, 23, 24, 580, 581], "productGroupIds": [7],
@@ -51,20 +44,15 @@ def fetch_live_certificates():
     }
     try:
         response = requests.post(url, headers=headers, json=payload, timeout=15)
-        response.raise_for_status()
         data = response.json()
-        
         items = data.get('products', data.get('data', []))
         if not items and isinstance(data, dict):
             list_keys = [k for k in data.keys() if isinstance(data[k], list)]
             if list_keys: items = data[max(list_keys, key=lambda k: len(data[k]))]
-                    
-        if not items: return pd.DataFrame({"Errore": ["Nessun dato dal server BNP."]})
-            
+        if not items: return pd.DataFrame({"Errore": ["Nessun dato."]})
+        
         df = pd.json_normalize(items)
         col_mapping = {}
-        
-        # Mappatura intelligente basata su lunghezza (per dare priorità a nomi brevi e diretti)
         for c in sorted(df.columns, key=len):
             cl = c.lower()
             if 'isin' in cl and 'underlying' not in cl: col_mapping[c] = 'ISIN'
@@ -75,39 +63,33 @@ def fetch_live_certificates():
             elif cl == 'bid' or cl.endswith('.bid'): col_mapping[c] = 'Denaro'
             elif 'leverage' in cl: col_mapping[c] = 'Leva'
             elif 'distancetobarrier' in cl: col_mapping[c] = 'Distanza Barriera %'
-            elif 'valuationdate' in cl or 'maturitydate' in cl: col_mapping[c] = 'Scadenza'
             elif 'assetclassid' in cl or 'assetclass.id' in cl: col_mapping[c] = 'Categoria_ID'
 
-        # --- DEDUPLICAZIONE CHIRURGICA ---
         df = df.rename(columns=col_mapping)
-        df = df.loc[:, ~df.columns.duplicated()].copy() # Qui uccidiamo il bug dell'utente
-
-        # Traduzione Categorie
+        df = df.loc[:, ~df.columns.duplicated()].copy() # FIX CRITICO
+        
         asset_map = {1: 'Azioni', 2: 'Indici', 3: 'Valute', 4: 'Materie prime', 5: 'Tassi di interesse', 11: 'ETF', 14: 'Volatility'}
         if 'Categoria_ID' in df.columns:
             df['Classe'] = pd.to_numeric(df['Categoria_ID'], errors='coerce').map(asset_map).fillna('Altro')
         
-        # Filtraggio Direzionale (Solo Short)
+        for col in ['Strike', 'Multiplo', 'Lettera', 'Denaro', 'Leva', 'Distanza Barriera %']:
+            if col in df.columns: df[col] = pd.to_numeric(df[col], errors='coerce')
+        
+        # Filtro Short
         tipo_cols = [c for c in df.columns if df[c].astype(str).str.contains('Short', case=False, na=False).any()]
         if tipo_cols: df = df[df[tipo_cols[0]].astype(str).str.contains('Short', case=False, na=False)]
-
-        # Pulizia Numerica (Evita DataFrame in to_numeric)
-        for col in ['Strike', 'Multiplo', 'Lettera', 'Denaro', 'Leva', 'Distanza Barriera %']:
-            if col in df.columns:
-                df[col] = pd.to_numeric(df[col], errors='coerce')
         
         return df.dropna(subset=['Strike', 'Lettera'])
     except Exception as e:
-        return pd.DataFrame({"Errore": [f"Errore API o Parsing: {str(e)}"]})
+        return pd.DataFrame({"Errore": [f"Errore API: {str(e)}"]})
 
-# --- SIDEBAR ATTRITI ---
+# --- SIDEBAR ---
 st.sidebar.header("📉 Attriti di Mercato")
 ui_spread = st.sidebar.number_input("Bid-Ask Spread (%)", value=0.5, step=0.1) / 100
 ui_comm = st.sidebar.number_input("Commissioni (%)", value=0.1, step=0.05) / 100
 ui_div = st.sidebar.number_input("Dividend Yield (%)", value=1.5, step=0.1) / 100
 
-st.title("🏦 Dashboard Copertura Istituzionale (v5.1)")
-
+st.title("🏦 Dashboard Copertura Istituzionale (v5.5)")
 st.markdown('<div class="risk-toggle">', unsafe_allow_html=True)
 is_real_ratio = st.toggle("🛡️ **Modalità Risk Manager (Hedge Ratio Netto)**", value=True)
 st.markdown('</div>', unsafe_allow_html=True)
@@ -115,7 +97,7 @@ st.markdown('</div>', unsafe_allow_html=True)
 tab1, tab2, tab3, tab4 = st.tabs(["🎯 Setup & Matrice", "📈 Backtest Storico", "🔍 Database Live", "🤖 Advisor Strategico"])
 
 # ======================================================================
-# TAB 1: CALCOLATORE E MATRICE
+# TAB 1: SETUP E RISULTATI ORIGINALI
 # ======================================================================
 with tab1:
     with st.form("input_form"):
@@ -126,23 +108,22 @@ with tab1:
             if cert: st.info(f"📡 ISIN: {cert['isin']}")
             p_iniziale = st.number_input("Prezzo Lettera (€)", value=cert['prezzo'] if cert else 7.64, step=0.01)
             strike = st.number_input("Strike", value=cert['strike'] if cert else 7505.97, step=0.01)
-            cambio = st.number_input("Cambio", value=1.15, step=0.01)
+            cambio = st.number_input("Tasso di cambio EUR", value=1.15, step=0.01)
             multiplo = st.number_input("Multiplo", value=cert['multiplo'] if cert else 0.01, format="%.4f")
             euribor = st.number_input("Euribor 12M", value=0.02456, format="%.5f")
         with col2:
             st.markdown("### 📉 Mercato")
-            v_iniziale = st.number_input("Spot Iniziale", value=6670.75, step=0.01)
-            v_ipotetico = st.number_input("Target", value=6000.0, step=0.01)
-            giorni = st.number_input("Giorni", value=60, step=1)
+            v_iniziale = st.number_input("Indice Spot", value=6670.75, step=0.01)
+            v_ipotetico = st.number_input("Scenario Target", value=6000.0, step=0.01)
+            giorni = st.number_input("Giorni Hedging", value=60, step=1)
         with col3:
             st.markdown("### 💼 Portafoglio")
-            ptf = st.number_input("Capitale (€)", value=200000.0, step=1000.0)
+            ptf = st.number_input("Capitale Ptf (€)", value=200000.0, step=1000.0)
             beta = st.number_input("Beta", value=1.00, step=0.05)
-        
         st.divider()
-        tipo_copertura = st.radio("Strategia", ["Auto-Ottimizza", "Manuale"], horizontal=True)
-        n_turbo_custom = st.number_input("Qtà Manuale", value=1000, step=10) if tipo_copertura == "Manuale" else None
-        submitted = st.form_submit_button("🔥 Esegui Motore")
+        tipo_copertura = st.radio("Ottimizzazione", ["Auto-Ottimizza", "Manuale"], horizontal=True)
+        n_turbo_custom = st.number_input("Qtà Certificati", value=1000, step=10) if tipo_copertura == "Manuale" else None
+        submitted = st.form_submit_button("🔥 Esegui Calcolo")
 
     if submitted:
         params = TurboParameters(p_iniziale, strike, cambio, multiplo, euribor, v_iniziale, v_ipotetico, giorni, ptf, beta, ui_div, ui_spread, ui_comm)
@@ -154,24 +135,28 @@ with tab1:
             res['valore_copertura_simulata'] = res['n_turbo'] * res['prezzo_futuro'] * (1 - ui_spread - ui_comm)
             res['totale_simulato'] = res['valore_ptf_simulato'] + res['valore_copertura_simulata']
             res['percentuale'] = (res['totale_simulato'] - res['capitale']) / res['capitale']
-            perdita_ptf = params.portafoglio - res['valore_ptf_simulato']
-            res['hedge_ratio_reale'] = (res['valore_copertura_simulata'] - (res['n_turbo'] * params.prezzo_iniziale * (1 + ui_spread + ui_comm))) / perdita_ptf if perdita_ptf > 0 else 0
+            p_ptf = params.portafoglio - res['valore_ptf_simulato']
+            res['hedge_ratio_reale'] = (res['valore_copertura_simulata'] - (res['n_turbo'] * params.prezzo_iniziale * (1+ui_spread+ui_comm))) / p_ptf if p_ptf > 0 else 0
+            res['totale_copertura'] = res['capitale']
         st.session_state['res'], st.session_state['params'], st.session_state['barriera_calcolata'] = res, params, res['barriera']
 
     if 'res' in st.session_state:
         res, params = st.session_state['res'], st.session_state['params']
         st.divider()
+        st.markdown("<h2>📊 Risultati Copertura</h2>", unsafe_allow_html=True)
         c1, c2, c3 = st.columns([1, 1, 1.3])
         with c1:
-            st.markdown(f"""<div style='background-color:#1A365D; color:white; padding:10px; border-radius:5px;'><b>TURBO</b><br/>Strike: {params.strike:.2f}<br/>Fair Value: {res['fair_value']:.4f}€</div>""", unsafe_allow_html=True)
+            st.markdown("<div style='background-color:#2c5282; padding:10px; color:white; border-radius:5px;'>CARATTERISTICHE TURBO</div>", unsafe_allow_html=True)
+            st.markdown(f"<table style='width:100%; font-size:14px;'><tr><td>Strike</td><td align='right'>{params.strike:.2f}</td></tr><tr><td>Fair Value</td><td align='right'>{res['fair_value']:.4f}€</td></tr><tr><td>Premio</td><td align='right'>{res['premio']:.4f}€</td></tr></table>", unsafe_allow_html=True)
         with c2:
-            st.markdown(f"""<div style='background-color:#1A365D; color:white; padding:10px; border-radius:5px;'><b>INDICE</b><br/>Spot: {params.valore_iniziale:.2f}<br/>Barriera: {res['barriera']:.2f}</div>""", unsafe_allow_html=True)
+            st.markdown("<div style='background-color:#2c5282; padding:10px; color:white; border-radius:5px;'>INDICE</div>", unsafe_allow_html=True)
+            st.markdown(f"<table style='width:100%; font-size:14px;'><tr><td>Spot</td><td align='right'>{params.valore_iniziale:.2f}</td></tr><tr><td>Target</td><td align='right'>{params.valore_ipotetico:.2f}</td></tr><tr><td>Barriera</td><td align='right'>{res['barriera']:.2f}</td></tr></table>", unsafe_allow_html=True)
         with c3:
-            st.markdown(f"<div style='text-align:right;'><b>Qtà: {res['n_turbo']:,.0f}</b><br/><h3>{res['totale_simulato']:,.2f} €</h3></div>", unsafe_allow_html=True)
+            st.markdown(f"<div style='text-align:right; font-size:20px;'><b>{params.portafoglio:,.2f} €</b></div>", unsafe_allow_html=True)
+            st.markdown(f"<table style='width:100%; font-size:14px;'><tr><td>N. Turbo</td><td align='right'>{res['n_turbo']:,.0f}</td></tr><tr style='background-color:#E3F2FD;'><td><b>TOTALE SIMULATO</b></td><td align='right'><b>{res['totale_simulato']:,.2f} €</b></td></tr></table>", unsafe_allow_html=True)
             perf = res['percentuale']*100
-            st.markdown(f"<div style='background-color:{'#E8F5E9' if perf>=0 else '#FFEBEE'}; text-align:center; padding:5px;'><b>{perf:+.2f}% Perf. Netta</b></div>", unsafe_allow_html=True)
-        
-        # Matrice Sensitività
+            st.markdown(f"<div style='background-color:{'#E8F5E9' if perf>=0 else '#FFEBEE'}; text-align:center; padding:15px; border:2px solid {'#2E7D32' if perf>=0 else '#C62828'}; margin-top:10px;'><h3>{perf:+.2f}% Perf. Netta</h3></div>", unsafe_allow_html=True)
+
         st.divider()
         st.markdown("### 🌡️ Matrice di Sensitività")
         var_list = [-0.20, -0.10, -0.05, 0.0, 0.05, 0.10, 0.20]
@@ -186,66 +171,84 @@ with tab1:
             matrix.append(row)
         df_sens = pd.DataFrame(matrix, columns=[f"{v*100:+.0f}%" for v in var_list], index=[f"T+{t}gg" for t in t_steps])
         st.dataframe(df_sens.style.format("{:.3f}€").background_gradient(cmap='RdYlGn', axis=None, vmin=0.0), use_container_width=True)
+        
+        st.divider()
+        g1, g2 = st.columns(2)
+        with g1:
+            df_s, b_l = generate_scenario_data(params)
+            st.plotly_chart(plot_payoff_profile(df_s, params.valore_iniziale, b_l), use_container_width=True)
+        with g2: st.plotly_chart(plot_pl_waterfall(res), use_container_width=True)
 
 # ======================================================================
-# TAB 2: BACKTEST
+# TAB 2: BACKTEST RIPRISTINATO (VERDETTO + PDF)
 # ======================================================================
 with tab2:
-    st.markdown("### 🕰️ Analisi Storica")
-    if 'barriera_calcolata' not in st.session_state: st.warning("Esegui il Tab 1.")
+    st.markdown("### 🕰️ Backtest Storico e Analisi del Rischio")
+    if 'barriera_calcolata' not in st.session_state: st.warning("Esegui il Setup nel Tab 1.")
     else:
-        b1, b2, b3 = st.columns(3)
-        t_ptf = b1.text_input("Ticker Ptf", "SPY")
-        t_idx = b2.text_input("Ticker Indice", "^GSPC")
-        t_fx = b3.text_input("FX", "")
+        with st.expander("Parametri Backtest", expanded=True):
+            b1, b2, b3, b4, b5 = st.columns(5)
+            ticker_ptf = b1.text_input("Ticker Ptf", value="SPY")
+            ticker_idx = b2.text_input("Ticker Indice", value="^GSPC")
+            ticker_fx = b3.text_input("FX (es. EURUSD=X)", value="")
+            start_date = b4.date_input("Inizio", value=datetime.date(2023, 1, 1))
+            end_date = b5.date_input("Fine", value=datetime.date.today())
+        
         if st.button("🚀 Avvia Backtest"):
-            df_bt, msg, diag = run_historical_backtest(t_ptf, t_idx, t_fx, datetime.date(2023,1,1), datetime.date.today(), st.session_state['barriera_calcolata'])
+            df_bt, msg, diag = run_historical_backtest(ticker_ptf, ticker_idx, ticker_fx, start_date, end_date, st.session_state['barriera_calcolata'])
             if df_bt is not None:
-                st.success(diag['title'])
-                st.line_chart(df_bt.set_index('Date')[['Ptf_Close']])
+                st.divider()
+                st.markdown("### ⚖️ Verdetto del Risk Manager")
+                if diag['color'] == 'error': st.error(f"**{diag['title']}**\n\n{diag['body']}\n\n**Azione:** {diag['action']}")
+                elif diag['color'] == 'warning': st.warning(f"**{diag['title']}**\n\n{diag['body']}\n\n**Azione:** {diag['action']}")
+                else: st.success(f"**{diag['title']}**\n\n{diag['body']}\n\n**Azione:** {diag['action']}")
+                
+                c1, c2 = st.columns(2)
+                with c1: st.markdown("**Andamento Ptf**"); st.line_chart(df_bt.set_index('Date')[['Ptf_Close']])
+                with c2: st.markdown("**Drawdown Indice**"); st.area_chart(df_bt.set_index('Date')['Drawdown'])
+                
+                pdf_b = generate_pdf_report(df_bt, ticker_ptf, ticker_idx, ticker_fx, st.session_state['barriera_calcolata'], diag)
+                st.download_button("📄 Scarica Report PDF", data=pdf_b, file_name=f"Hedge_{ticker_ptf}.pdf")
             else: st.error(msg)
 
 # ======================================================================
-# TAB 3: DATABASE LIVE
+# TAB 3: DATABASE LIVE (FIXED)
 # ======================================================================
 with tab3:
-    st.markdown("### 🔍 Live Terminal BNP")
+    st.markdown("### 🔍 Live Terminal BNP Paribas")
     df_raw = fetch_live_certificates()
     if "Errore" in df_raw.columns: st.error(df_raw["Errore"].iloc[0])
     else:
-        c1, c2 = st.columns(2)
-        sott_list = ["Tutti"] + sorted([str(x) for x in df_raw['Sottostante'].unique()])
-        scelta_s = c1.selectbox("Sottostante", sott_list)
+        c1, c2, c3 = st.columns(3)
+        with c1: scelta_s = st.selectbox("Sottostante", ["Tutti"] + sorted([str(x) for x in df_raw['Sottostante'].unique()]))
+        with c2: scelta_c = st.selectbox("Classe", ["Tutte le categorie", "Azioni", "ETF", "Indici", "Materie prime", "Tassi di interesse", "Valute"])
+        with c3: ricerca_i = st.text_input("ISIN")
         df_f = df_raw.copy()
         if scelta_s != "Tutti": df_f = df_f[df_f['Sottostante'] == scelta_s]
+        if scelta_c != "Tutte le categorie": df_f = df_f[df_f['Classe'] == scelta_c]
+        if ricerca_i: df_f = df_f[df_f['ISIN'].str.contains(ricerca_i, case=False)]
+        
         sel = st.dataframe(df_f, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row")
         if len(sel.selection.rows) > 0:
             row = df_f.iloc[sel.selection.rows[0]]
             st.session_state['selected_cert'] = {"isin": row['ISIN'], "strike": row['Strike'], "multiplo": row['Multiplo'], "prezzo": row['Lettera']}
-            st.success(f"Agganciato {row['ISIN']}")
+            st.success(f"✅ ISIN {row['ISIN']} pronto. Vai al Tab 1."); st.button("Ricarica ora")
 
 # ======================================================================
-# TAB 4: ADVISOR (REVERSE ENGINEERING)
+# TAB 4: ADVISOR
 # ======================================================================
 with tab4:
     st.markdown("### 🤖 Advisor: Reverse Engineering")
-    st.markdown("Calcola il certificato perfetto per il tuo budget.")
     with st.form("adv_form"):
         c1, c2 = st.columns(2)
-        target_v = c1.number_input("Valore Portafoglio (€)", value=200000)
-        target_b = c1.number_input("Beta", value=1.0)
-        budget = c2.number_input("Budget Copertura (€)", value=5000)
-        min_dist = c2.slider("Distanza Barriera Min (%)", 2, 30, 10)
-        adv_sub = st.form_submit_button("🔍 Scouting ISIN")
-    
-    if adv_sub:
-        leva_target = (target_v * target_b) / budget
-        st.info(f"Leva Target calcolata: **{leva_target:.1f}**")
-        df_l = fetch_live_certificates()
-        if "Errore" not in df_l.columns:
-            df_l['Diff_Leva'] = (df_l['Leva'] - leva_target).abs()
-            matches = df_l[df_l['Distanza Barriera %'] >= min_dist].sort_values('Diff_Leva').head(5)
-            if matches.empty: st.warning("Nessun match. Alza il budget o abbassa la distanza barriera.")
-            else:
+        t_v = c1.number_input("Valore Ptf (€)", value=200000); t_b = c1.number_input("Beta", value=1.0)
+        bud = c2.number_input("Budget (€)", value=5000); m_d = c2.slider("Distanza Barriera Min (%)", 2, 30, 10)
+        if st.form_submit_button("🔍 Scouting ISIN"):
+            leva_t = (t_v * t_b) / bud
+            st.info(f"Leva Target: **{leva_t:.1f}**")
+            df_l = fetch_live_certificates()
+            if "Errore" not in df_l.columns:
+                df_l['Diff_Leva'] = (df_l['Leva'] - leva_t).abs()
+                matches = df_l[df_l['Distanza Barriera %'] >= m_d].sort_values('Diff_Leva').head(5)
                 st.dataframe(matches[['Sottostante', 'ISIN', 'Leva', 'Distanza Barriera %', 'Strike', 'Lettera']], use_container_width=True)
-                st.info("👆 Seleziona l'ISIN desiderato nel Tab 3 per caricarlo.")
+                st.info("👆 Seleziona l'ISIN nel Tab 3.")
