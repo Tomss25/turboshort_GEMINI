@@ -33,10 +33,11 @@ st.markdown("""
     [data-testid="stSidebar"] [data-testid="stExpander"] p, [data-testid="stSidebar"] [data-testid="stExpander"] label, [data-testid="stSidebar"] [data-testid="stExpander"] div { color: #1A365D !important; font-weight: 500; }
     [data-testid="stSidebar"] [data-testid="stExpander"] input { background-color: #F4F7F6 !important; color: #000000 !important; border: 1px solid #CBD5E0 !important; }
     [data-testid="stSidebar"] [data-testid="stExpander"] svg { stroke: #1A365D !important; }
+    [data-testid="stSidebarNav"] span, [data-testid="stSidebarNav"] div { color: #FFFFFF !important; font-weight: 600; }
+    [data-testid="stSidebarNav"] svg { stroke: #FFFFFF !important; fill: #FFFFFF !important; }
 </style>
 """, unsafe_allow_html=True)
 
-# --- MOTORE ESTRAZIONE DATI BNP (Nascosto nel backend) ---
 # --- MOTORE ESTRAZIONE DATI BNP (Nascosto nel backend) ---
 @st.cache_data(ttl=900)
 def fetch_live_certificates():
@@ -70,33 +71,44 @@ def fetch_live_certificates():
         df = pd.json_normalize(items)
         col_mapping = {}
         
-        # Riordino le colonne per lunghezza per mappare prima i nomi diretti (es. "strike" prima di "underlying.strike")
+        # Riordino le colonne per mappare prima i nomi diretti ed evitare doppioni
         for c in sorted(df.columns, key=len):
             cl = c.lower()
             if 'isin' in cl and 'underlying' not in cl: col_mapping[c] = 'ISIN'
-            elif 'underlyingname' in cl or 'underlying.name' in cl: col_mapping[c] = 'Sottostante'
+            elif ('underlyingname' in cl or 'underlying.name' in cl) and 'short' not in cl: col_mapping[c] = 'Sottostante'
             elif 'strike' in cl: col_mapping[c] = 'Strike'
             elif 'ratio' in cl or 'multiplier' in cl: col_mapping[c] = 'Multiplo'
-            elif 'ask' in cl: col_mapping[c] = 'Lettera'
-            elif 'bid' in cl: col_mapping[c] = 'Denaro'
+            elif cl == 'ask' or cl.endswith('.ask'): col_mapping[c] = 'Lettera'
+            elif cl == 'bid' or cl.endswith('.bid'): col_mapping[c] = 'Denaro'
             elif 'leverage' in cl: col_mapping[c] = 'Leva'
-            elif 'direction' in cl or 'type' in cl: col_mapping[c] = 'Categoria'
             elif 'distancetobarrier' in cl: col_mapping[c] = 'Distanza Barriera %'
-            
+            elif 'valuationdate' in cl or 'maturitydate' in cl: col_mapping[c] = 'Scadenza'
+            elif 'assetclassid' in cl or 'assetclass.id' in cl: col_mapping[c] = 'Categoria_ID'
+
         df.rename(columns=col_mapping, inplace=True)
+        df = df.loc[:, ~df.columns.duplicated()] # Deduplicazione
         
-        # KILLER DI DUPLICATI: Elimina le colonne omonime create da chiavi JSON ridondanti
-        df = df.loc[:, ~df.columns.duplicated()]
+        # TRADUTTORE ASSET CLASS (Mappa ID numerici su stringhe leggibili)
+        if 'Categoria_ID' in df.columns:
+            asset_map = {1: 'Azioni', 2: 'Indici', 3: 'Valute', 4: 'Materie prime', 5: 'Tassi di interesse', 11: 'ETF', 14: 'Volatility'}
+            df['Categoria'] = pd.to_numeric(df['Categoria_ID'], errors='coerce').map(asset_map).fillna('Altro')
+        else:
+            df['Categoria'] = 'N/D'
+
+        # GESTIONE SCADENZA (Formatta date)
+        if 'Scadenza' in df.columns:
+            df['Scadenza'] = pd.to_datetime(df['Scadenza'], errors='coerce').dt.strftime('%d/%m/%Y').fillna('Open End')
+        else:
+            df['Scadenza'] = 'Open End'
         
-        colonne_utili = ['ISIN', 'Sottostante', 'Categoria', 'Strike', 'Multiplo', 'Lettera', 'Denaro', 'Leva', 'Distanza Barriera %']
+        # Forza l'ordine delle colonne istituzionale
+        colonne_utili = ['Sottostante', 'ISIN', 'Categoria', 'Scadenza', 'Strike', 'Multiplo', 'Leva', 'Distanza Barriera %', 'Denaro', 'Lettera']
         colonne_finali = [c for c in colonne_utili if c in df.columns]
         
         if len(colonne_finali) >= 4:
             df = df[colonne_finali].copy()
             for col in ['Strike', 'Multiplo', 'Lettera', 'Denaro', 'Leva', 'Distanza Barriera %']:
-                if col in df.columns: 
-                    df[col] = pd.to_numeric(df[col], errors='coerce')
-                    
+                if col in df.columns: df[col] = pd.to_numeric(df[col], errors='coerce')
         return df.dropna(subset=['Strike', 'Lettera'])
     except Exception as e:
         return pd.DataFrame({"Errore": [f"Errore connessione API: {str(e)}"]})
@@ -104,6 +116,7 @@ def fetch_live_certificates():
 
 # --- SIDEBAR ATTRITI ---
 st.sidebar.header("📉 Attriti di Mercato")
+st.sidebar.markdown("*Se metti questi valori a zero, stai invalidando il modello.*")
 with st.sidebar.expander("💰 Costi di Transazione", expanded=True):
     ui_spread = st.number_input("Bid-Ask Spread (%)", min_value=0.0, max_value=5.0, value=0.5, step=0.1) / 100
     ui_comm = st.number_input("Commissioni Broker (%)", min_value=0.0, max_value=2.0, value=0.1, step=0.05) / 100
@@ -127,6 +140,7 @@ with tab1:
         col1, col2, col3 = st.columns(3)
         with col1:
             st.markdown("### ⚙️ Derivato (Turbo)")
+            
             cert = st.session_state.get('selected_cert')
             if cert:
                 st.markdown(f"<div style='background-color:#E8F5E9; color:#2E7D32; padding:5px 10px; border-radius:5px; font-weight:bold; margin-bottom:10px;'>📡 ISIN Caricato: {cert['isin']}</div>", unsafe_allow_html=True)
@@ -207,6 +221,29 @@ with tab1:
             st.markdown(f"<div style='background-color: {perf_bg}; padding: 20px; border-radius: 5px; text-align: center; border: 3px solid {perf_color}; margin-top: 15px;'><div style='font-size: 42px; font-weight: bold; color: {perf_color}; line-height: 1;'>{perf_sign}{perf:.2f}%</div><div style='color: #666; font-size: 12px; margin-top: 8px; font-weight: 600;'>PERFORMANCE NETTA COPERTA</div></div>", unsafe_allow_html=True)
 
         st.divider()
+        hr_val = (res['hedge_ratio_reale'] if is_real_ratio else res['hedge_ratio_commerciale']) * 100
+        label_hr = "Hedge Ratio (Reale al netto dei costi)" if is_real_ratio else "Hedge Ratio (Commerciale/Lordo)"
+        
+        col_diag1, col_diag2 = st.columns([1, 2])
+        with col_diag1:
+            st.metric(label=f"🛡️ {label_hr}", value=f"{hr_val:.1f}%")
+            if not is_real_ratio:
+                st.caption("⚠️ *Stai ignorando gli attriti di mercato. L'over-confidence uccide i portafogli.*")
+                
+        with col_diag2:
+            is_ko = params.valore_ipotetico >= res['barriera']
+            if is_ko:
+                st.error("**🚨 VERDETTO: KNOCK-OUT**\n\nIl derivato è stato distrutto. Il tuo portafoglio sta sanguinando.")
+            elif res['pl_portafoglio'] >= 0:
+                st.info("**ℹ️ VERDETTO: CASH DRAG**\n\nIl mercato non è sceso. I costi di transazione e il decadimento del Turbo hanno eroso i profitti del portafoglio.")
+            elif hr_val >= 90:
+                st.success(f"**✅ VERDETTO: HEDGE CHIRURGICO**\n\nIl derivato compensa il {hr_val:.1f}% del drawdown reale, anche pagando lo spread al market maker.")
+            elif hr_val >= 50:
+                st.warning(f"**⚠️ VERDETTO: SOTTOCOPERTURA**\n\nAssorbi solo il {hr_val:.1f}%. I costi di mercato ti stanno mangiando margine di protezione.")
+            else:
+                st.error(f"**❌ VERDETTO: SPRECO DI CAPITALE**\n\nCopri meno del 50%. Stai letteralmente pagando commissioni per non proteggere nulla.")
+
+        st.divider()
         st.subheader("⚠️ Matrice di Stress (Con Slippage Dinamico)")
         df_stress = run_stress_test(st.session_state['params'])
         st.dataframe(df_stress, use_container_width=True, hide_index=True)
@@ -257,17 +294,25 @@ with tab3:
         st.error(df_raw["Errore"].iloc[0])
     else:
         col1, col2, col3 = st.columns(3)
-        col_sott = 'Sottostante' if 'Sottostante' in df_raw.columns else df_raw.columns[0]
-        col_cat = 'Categoria' if 'Categoria' in df_raw.columns else None
         
-        with col1: scelta_sott = st.selectbox("Sottostante BNP", ["Tutti"] + sorted([str(x) for x in df_raw[col_sott].dropna().unique()]))
-        with col2: scelta_cat = st.selectbox("Categoria BNP", ["Tutti"] + sorted([str(x) for x in df_raw[col_cat].dropna().unique()])) if col_cat else "Tutti"
-        with col3: ricerca_libera = st.text_input("Ricerca ISIN:")
+        with col1: 
+            lista_sottostanti = ["Tutti"] + sorted([str(x) for x in df_raw['Sottostante'].dropna().unique()])
+            scelta_sott = st.selectbox("Sottostante BNP", lista_sottostanti)
+            
+        with col2: 
+            categorie_fisse = ["Tutte le categorie", "Azioni", "ETF", "Indici", "Materie prime", "Tassi di interesse", "Valute", "Volatility"]
+            scelta_cat = st.selectbox("Categoria", categorie_fisse)
+            
+        with col3: 
+            ricerca_libera = st.text_input("Ricerca (es. ISIN):")
         
         df_filtered = df_raw.copy()
-        if scelta_sott != "Tutti": df_filtered = df_filtered[df_filtered[col_sott] == scelta_sott]
-        if scelta_cat != "Tutti" and col_cat: df_filtered = df_filtered[df_filtered[col_cat] == scelta_cat]
-        if ricerca_libera: df_filtered = df_filtered[df_filtered.astype(str).apply(lambda x: x.str.contains(ricerca_libera, case=False)).any(axis=1)]
+        if scelta_sott != "Tutti": 
+            df_filtered = df_filtered[df_filtered['Sottostante'] == scelta_sott]
+        if scelta_cat != "Tutte le categorie": 
+            df_filtered = df_filtered[df_filtered['Categoria'] == scelta_cat]
+        if ricerca_libera: 
+            df_filtered = df_filtered[df_filtered.astype(str).apply(lambda x: x.str.contains(ricerca_libera, case=False)).any(axis=1)]
         
         selection = st.dataframe(df_filtered, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row")
         
@@ -284,6 +329,5 @@ with tab3:
             }
             st.success(f"✅ Dati agganciati per ISIN: {st.session_state['selected_cert']['isin']}")
             
-            # Pulsante per forzare il refresh della pagina e caricare i dati nel Tab 1
-            if st.button("🔄 Conferma e Ricarica Tab 1", type="primary"):
+            if st.button("🔄 Conferma e Ricarica Setup Copertura", type="primary"):
                 st.rerun()
