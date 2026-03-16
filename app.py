@@ -37,6 +37,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # --- MOTORE ESTRAZIONE DATI BNP (Nascosto nel backend) ---
+# --- MOTORE ESTRAZIONE DATI BNP (Nascosto nel backend) ---
 @st.cache_data(ttl=900)
 def fetch_live_certificates():
     url = "https://investimenti.bnpparibas.it/apiv2/api/v1/productlist/"
@@ -68,7 +69,9 @@ def fetch_live_certificates():
             
         df = pd.json_normalize(items)
         col_mapping = {}
-        for c in df.columns:
+        
+        # Riordino le colonne per lunghezza per mappare prima i nomi diretti (es. "strike" prima di "underlying.strike")
+        for c in sorted(df.columns, key=len):
             cl = c.lower()
             if 'isin' in cl and 'underlying' not in cl: col_mapping[c] = 'ISIN'
             elif 'underlyingname' in cl or 'underlying.name' in cl: col_mapping[c] = 'Sottostante'
@@ -81,13 +84,19 @@ def fetch_live_certificates():
             elif 'distancetobarrier' in cl: col_mapping[c] = 'Distanza Barriera %'
             
         df.rename(columns=col_mapping, inplace=True)
+        
+        # KILLER DI DUPLICATI: Elimina le colonne omonime create da chiavi JSON ridondanti
+        df = df.loc[:, ~df.columns.duplicated()]
+        
         colonne_utili = ['ISIN', 'Sottostante', 'Categoria', 'Strike', 'Multiplo', 'Lettera', 'Denaro', 'Leva', 'Distanza Barriera %']
         colonne_finali = [c for c in colonne_utili if c in df.columns]
         
         if len(colonne_finali) >= 4:
             df = df[colonne_finali].copy()
             for col in ['Strike', 'Multiplo', 'Lettera', 'Denaro', 'Leva', 'Distanza Barriera %']:
-                if col in df.columns: df[col] = pd.to_numeric(df[col], errors='coerce')
+                if col in df.columns: 
+                    df[col] = pd.to_numeric(df[col], errors='coerce')
+                    
         return df.dropna(subset=['Strike', 'Lettera'])
     except Exception as e:
         return pd.DataFrame({"Errore": [f"Errore connessione API: {str(e)}"]})
