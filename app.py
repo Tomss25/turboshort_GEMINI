@@ -5,6 +5,10 @@ from stress_test import run_stress_test
 from backtest import run_historical_backtest, generate_pdf_report
 import datetime
 
+# Inizializzazione della variabile di stato per il database certificati
+if 'selected_cert' not in st.session_state:
+    st.session_state['selected_cert'] = None
+
 st.set_page_config(page_title="Turbo Hedge Quant", layout="wide", page_icon="🏦")
 
 # --- INIEZIONE CSS CORPORATE AVANZATA ---
@@ -33,48 +37,15 @@ st.markdown("""
     }
     div[data-testid="stFormSubmitButton"] button:hover { background-color: #2c5282 !important; color: #FFFFFF !important; }
 
-    /* =====================================================================
-       STYLING ESCLUSIVO DELLA SIDEBAR (BLUE NAVY & WHITE CONTRAST)
-       ===================================================================== */
-    [data-testid="stSidebar"] {
-        background-color: #1A365D !important;
-    }
-    /* Testo primario bianco nella sidebar */
-    [data-testid="stSidebar"] .stMarkdown p,
-    [data-testid="stSidebar"] .stMarkdown h1,
-    [data-testid="stSidebar"] .stMarkdown h2,
-    [data-testid="stSidebar"] .stMarkdown h3,
-    [data-testid="stSidebar"] .stMarkdown em {
-        color: #FFFFFF !important;
-    }
-    
-    /* Container degli Expander (Sfondo Bianco) */
-    [data-testid="stSidebar"] [data-testid="stExpander"] {
-        background-color: #FFFFFF !important;
-        border-radius: 8px !important;
-        border: none !important;
-        margin-bottom: 12px !important;
-    }
-    /* Testo dentro gli expander (Blue Navy per contrasto) */
-    [data-testid="stSidebar"] [data-testid="stExpander"] p,
-    [data-testid="stSidebar"] [data-testid="stExpander"] label,
-    [data-testid="stSidebar"] [data-testid="stExpander"] div {
-        color: #1A365D !important;
-        font-weight: 500;
-    }
-    /* Sfondo dei campi di input numerici dentro gli expander */
-    [data-testid="stSidebar"] [data-testid="stExpander"] input {
-        background-color: #F4F7F6 !important;
-        color: #000000 !important;
-        border: 1px solid #CBD5E0 !important;
-    }
-    /* Icone SVG dentro l'expander */
-    [data-testid="stSidebar"] [data-testid="stExpander"] svg {
-        stroke: #1A365D !important;
-    }
+    /* STYLING ESCLUSIVO DELLA SIDEBAR */
+    [data-testid="stSidebar"] { background-color: #1A365D !important; }
+    [data-testid="stSidebar"] .stMarkdown p, [data-testid="stSidebar"] .stMarkdown h1, [data-testid="stSidebar"] .stMarkdown h2, [data-testid="stSidebar"] .stMarkdown h3, [data-testid="stSidebar"] .stMarkdown em { color: #FFFFFF !important; }
+    [data-testid="stSidebar"] [data-testid="stExpander"] { background-color: #FFFFFF !important; border-radius: 8px !important; border: none !important; margin-bottom: 12px !important; }
+    [data-testid="stSidebar"] [data-testid="stExpander"] p, [data-testid="stSidebar"] [data-testid="stExpander"] label, [data-testid="stSidebar"] [data-testid="stExpander"] div { color: #1A365D !important; font-weight: 500; }
+    [data-testid="stSidebar"] [data-testid="stExpander"] input { background-color: #F4F7F6 !important; color: #000000 !important; border: 1px solid #CBD5E0 !important; }
+    [data-testid="stSidebar"] [data-testid="stExpander"] svg { stroke: #1A365D !important; }
 </style>
 """, unsafe_allow_html=True)
-
 
 # --- SIDEBAR DELLA REALTÀ (ATTRITI) ---
 st.sidebar.header("📉 Attriti di Mercato")
@@ -104,16 +75,25 @@ with tab1:
         col1, col2, col3 = st.columns(3)
         with col1:
             st.markdown("### ⚙️ Derivato (Turbo)")
-            p_iniziale = st.number_input("Prezzo iniziale (€)", value=7.64, step=0.01)
-            strike = st.number_input("Strike", value=7505.97, step=0.01)
+            
+            # --- RICEZIONE DATI DAL DATABASE ---
+            cert = st.session_state.get('selected_cert')
+            
+            if cert:
+                st.markdown(f"<div style='background-color:#E8F5E9; color:#2E7D32; padding:5px 10px; border-radius:5px; font-weight:bold; margin-bottom:10px;'>📡 ISIN Caricato: {cert['isin']}</div>", unsafe_allow_html=True)
+            
+            p_iniziale = st.number_input("Prezzo (Lettera) (€)", value=cert['prezzo'] if cert else 7.64, step=0.01)
+            strike = st.number_input("Strike", value=cert['strike'] if cert else 7505.97, step=0.01)
             cambio = st.number_input("Tasso di cambio", value=1.15, step=0.01)
-            multiplo = st.number_input("Multiplo", value=0.01, format="%.3f")
+            multiplo = st.number_input("Multiplo", value=cert['multiplo'] if cert else 0.01, format="%.4f")
             euribor = st.number_input("Euribor 12M", value=0.02456, format="%.5f")
+            
         with col2:
             st.markdown("### 📉 Mercato")
             v_iniziale = st.number_input("Indice Iniziale", value=6670.75, step=0.01)
             v_ipotetico = st.number_input("Scenario Futuro", value=6000.0, step=0.01)
             giorni = st.number_input("Orizzonte (Giorni)", value=60, step=1)
+            
         with col3:
             st.markdown("### 💼 Portafoglio")
             ptf = st.number_input("Capitale Ptf (€)", value=200000.0, step=1000.0)
@@ -153,7 +133,7 @@ with tab1:
             <tr style='background-color: #F8F9FA;'><td style='padding: 8px; border: 1px solid #dee2e6;'><strong>Premio</strong></td><td style='padding: 8px; border: 1px solid #dee2e6; text-align: right;'>{res['premio']:.4f} €</td></tr>
             <tr><td style='padding: 8px; border: 1px solid #dee2e6;'><strong>Strike</strong></td><td style='padding: 8px; border: 1px solid #dee2e6; text-align: right;'>{params.strike:.2f}</td></tr>
             <tr style='background-color: #F8F9FA;'><td style='padding: 8px; border: 1px solid #dee2e6;'><strong>Tasso di cambio</strong></td><td style='padding: 8px; border: 1px solid #dee2e6; text-align: right;'>{params.cambio:.2f}</td></tr>
-            <tr><td style='padding: 8px; border: 1px solid #dee2e6;'><strong>Multiplo</strong></td><td style='padding: 8px; border: 1px solid #dee2e6; text-align: right;'>{params.multiplo:.3f}</td></tr>
+            <tr><td style='padding: 8px; border: 1px solid #dee2e6;'><strong>Multiplo</strong></td><td style='padding: 8px; border: 1px solid #dee2e6; text-align: right;'>{params.multiplo:.4f}</td></tr>
             <tr style='height: 20px;'><td colspan='2' style='border: none;'></td></tr>
             <tr style='background-color: #F8F9FA;'><td style='padding: 8px; border: 1px solid #dee2e6;'><strong>Euribor 12M</strong></td><td style='padding: 8px; border: 1px solid #dee2e6; text-align: right;'>{params.euribor:.5f}</td></tr>
             </table>
@@ -233,7 +213,6 @@ with tab1:
         st.divider()
         st.markdown("### 📉 Analisi Visiva: Scenario e Decomposizione P&L")
         
-        # NUOVO LAYOUT DEI GRAFICI: Payoff Continuo affiancato al Waterfall Chart
         chart_col1, chart_col2 = st.columns(2)
         
         with chart_col1:
