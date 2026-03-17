@@ -240,7 +240,7 @@ with tab1:
         st.dataframe(df_sens.style.format("{:.3f}€").background_gradient(cmap='RdYlGn', axis=None, vmin=0.0), use_container_width=True)
         
         st.divider()
-        df_s, b_l = generate_scenario_data(params)
+        df_s, b_l = generate_scenario_data(params, res['n_turbo'])
         st.plotly_chart(plot_payoff_profile(df_s, params.valore_iniziale, b_l), use_container_width=True)
         st.plotly_chart(plot_pl_waterfall(res), use_container_width=True)
 
