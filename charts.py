@@ -4,7 +4,7 @@ import plotly.graph_objects as go
 from calculator import TurboParameters, DeterministicTurboCalculator
 import copy
 
-def generate_scenario_data(base_params: TurboParameters) -> tuple[pd.DataFrame, float]:
+def generate_scenario_data(base_params: TurboParameters, n_turbo_effettivo: float) -> tuple[pd.DataFrame, float]:
     variations = np.linspace(-0.30, 0.30, 100)
     data = []
     
@@ -21,22 +21,30 @@ def generate_scenario_data(base_params: TurboParameters) -> tuple[pd.DataFrame, 
         calc = DeterministicTurboCalculator(p_scenario)
         res = calc.calculate_all()
         
+        # --- FIX: Iniezione della quantità reale scelta dall'utente ---
+        # Ricalcoliamo i valori in base alla quantità effettiva (Auto o Manuale)
+        costo_unitario_acquisto = p_scenario.prezzo_iniziale * (1 + (p_scenario.bid_ask_spread / 2) + p_scenario.commissioni_pct)
+        costo_unitario_vendita = res['prezzo_futuro'] * (1 - ((p_scenario.bid_ask_spread / 2) + p_scenario.commissioni_pct + p_scenario.stress_slippage))
+        
+        capitale_investito = n_turbo_effettivo * costo_unitario_acquisto
+        
         is_ko = scenario_spot >= barriera
         
         if is_ko:
-            valore_copertura = 0.0
-            totale_simulato = res['valore_ptf_simulato'] 
+            valore_copertura_netta = 0.0
         else:
-            valore_copertura = res['valore_copertura_simulata']
-            totale_simulato = res['valore_ptf_simulato'] + valore_copertura
+            valore_copertura_netta = n_turbo_effettivo * costo_unitario_vendita
             
-        pl_netto = totale_simulato - res['totale_copertura']
+        totale_simulato = res['valore_ptf_simulato'] + valore_copertura_netta
+        totale_copertura_iniziale = base_params.portafoglio + capitale_investito
+        
+        pl_netto = totale_simulato - totale_copertura_iniziale
         
         data.append({
             'Variazione Indice': var * 100,
             'Livello Indice': scenario_spot,
             'P&L Netto (€)': pl_netto,
-            'Valore Turbo (€)': valore_copertura,
+            'Valore Turbo (€)': valore_copertura_netta,
             'Valore Ptf Indifeso (€)': res['valore_ptf_simulato'] - base_params.portafoglio,
             'Knock-Out': is_ko
         })
@@ -69,7 +77,7 @@ def plot_payoff_profile(df: pd.DataFrame, current_spot: float, barriera: float) 
     )
 
     fig.update_layout(
-        title='Profilo di Rischio e Rendimento (P&L a Scadenza)',
+        title='profilo di rischio e rendimento',
         xaxis_title='Livello Indice', yaxis_title='Profitto / Perdita (€)',
         hovermode='x unified', template='plotly_white', height=450,
         legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01),
@@ -102,7 +110,7 @@ def plot_pl_waterfall(res: dict) -> go.Figure:
     ))
 
     fig.update_layout(
-        title="Scomposizione P&L: L'Emorragia dei Costi di Mercato",
+        title="scomposizione P&L",
         showlegend=False,
         template='plotly_white',
         height=450,
