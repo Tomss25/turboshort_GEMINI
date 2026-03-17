@@ -43,7 +43,8 @@ class DeterministicTurboCalculator:
         tasso_netto = 1 - self.p.euribor + self.p.spread_emittente
         barriera = self.p.strike * math.pow(tasso_netto, T)
         
-        valore_intrinseco_futuro = self.safe_divide((barriera - self.p.valore_ipotetico) * self.p.multiplo, self.p.cambio)
+        # FIX CHIRURGICO: Il valore intrinseco in un Turbo Short si calcola dallo Strike, non dalla Barriera.
+        valore_intrinseco_futuro = self.safe_divide((self.p.strike - self.p.valore_ipotetico) * self.p.multiplo, self.p.cambio)
         prezzo_futuro = max(0.0, valore_intrinseco_futuro + premio)
 
         esposizione_pesata = self.p.portafoglio * self.p.beta
