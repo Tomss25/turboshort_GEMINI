@@ -3,10 +3,8 @@ import pandas as pd
 import numpy as np
 import requests
 import datetime
-import matplotlib.pyplot as plt
 from calculator import TurboParameters, DeterministicTurboCalculator
 from charts import generate_scenario_data, plot_payoff_profile, plot_pl_waterfall
-from stress_test import run_stress_test
 from backtest import run_historical_backtest, generate_pdf_report
 
 # --- STATO DELLA SESSIONE ---
@@ -94,7 +92,7 @@ ui_spread = st.sidebar.number_input("Bid-Ask Spread (%)", value=0.5, step=0.1) /
 ui_comm = st.sidebar.number_input("Commissioni (%)", value=0.1, step=0.05) / 100
 ui_div = st.sidebar.number_input("Dividend Yield (%)", value=1.5, step=0.1) / 100
 
-st.title("🏦 Dashboard Copertura Istituzionale (v6.3)")
+st.title("🏦 Dashboard Copertura Istituzionale (v6.4)")
 is_real_ratio = st.toggle("🛡️ **Hedge Ratio Netto (Risk Manager)**", value=True)
 
 tab1, tab2, tab3, tab4 = st.tabs(["🎯 Setup & Matrice", "📈 Backtest Storico", "🔍 Database Live", "🤖 Advisor Strategico"])
@@ -126,16 +124,43 @@ with tab1:
         st.divider()
         tipo_c = st.radio("Ottimizzazione", ["Auto", "Manuale"], horizontal=True)
         n_custom = st.number_input("Qtà", value=1000, step=10) if tipo_c == "Manuale" else None
+        
         if st.form_submit_button("🔥 Calcola"):
+            # Validazione input di base per prevenire crash (Es. divisione per zero)
+            cambio = max(0.0001, cambio)
+            giorni = max(0, giorni)
+            
             params = TurboParameters(p_iniziale, strike, cambio, multiplo, euribor, v_iniziale, v_ipotetico, giorni, ptf, beta, ui_div, ui_spread, ui_comm)
-            res = DeterministicTurboCalculator(params).calculate_all()
+            calc = DeterministicTurboCalculator(params)
+            res = calc.calculate_all()
+            
+            # --- FIX MATEMATICO: Override logiche calcolatore base ---
+            # 1. Calcolo Prezzo Futuro corretto (sullo Strike, non sulla Barriera)
+            valore_intrinseco_futuro = max(0, (params.strike - params.valore_ipotetico) / params.cambio * params.multiplo)
+            res['prezzo_futuro'] = valore_intrinseco_futuro + res['premio']
+            
+            # 2. Unificazione del calcolo Capitale ed Hedge Ratio (Auto vs Manuale)
             if n_custom:
                 res['n_turbo'] = float(n_custom)
-                res['capitale'] = ptf + (res['n_turbo'] * p_iniziale * (1 + ui_spread + ui_comm))
-                res['valore_copertura_simulata'] = res['n_turbo'] * res['prezzo_futuro'] * (1 - ui_spread - ui_comm)
-                res['totale_simulato'] = res['valore_ptf_simulato'] + res['valore_copertura_simulata']
-                res['percentuale'] = (res['totale_simulato'] - res['capitale']) / res['capitale']
-                res['hedge_ratio_reale'] = (res['valore_copertura_simulata'] - (res['n_turbo'] * p_iniziale * (1+ui_spread+ui_comm))) / (ptf - res['valore_ptf_simulato']) if (ptf - res['valore_ptf_simulato']) > 0 else 0
+                
+            costo_unitario_acquisto = params.prezzo_iniziale * (1 + ui_spread + ui_comm)
+            valore_unitario_vendita = res['prezzo_futuro'] * (1 - ui_spread - ui_comm)
+            
+            res['capitale'] = params.portafoglio + (res['n_turbo'] * costo_unitario_acquisto)
+            res['valore_copertura_simulata'] = res['n_turbo'] * valore_unitario_vendita
+            res['totale_simulato'] = res['valore_ptf_simulato'] + res['valore_copertura_simulata']
+            res['percentuale'] = (res['totale_simulato'] - res['capitale']) / res['capitale']
+            
+            perdita_ptf = params.portafoglio - res['valore_ptf_simulato']
+            if perdita_ptf > 0:
+                gain_lordo = res['n_turbo'] * (res['prezzo_futuro'] - params.prezzo_iniziale)
+                gain_netto = res['valore_copertura_simulata'] - (res['n_turbo'] * costo_unitario_acquisto)
+                res['hedge_ratio_commerciale'] = gain_lordo / perdita_ptf
+                res['hedge_ratio_reale'] = gain_netto / perdita_ptf
+            else:
+                res['hedge_ratio_commerciale'] = 0.0
+                res['hedge_ratio_reale'] = 0.0
+                
             st.session_state['res'], st.session_state['params'], st.session_state['barriera_calcolata'] = res, params, res['barriera']
 
     if 'res' in st.session_state:
@@ -168,11 +193,14 @@ with tab1:
 
         with c3:
             st.markdown(f"<div style='text-align:right; font-size:22px;'><b>{params.portafoglio:,.2f} €</b></div>", unsafe_allow_html=True)
+            # FIX: L'interfaccia reagisce coerentemente al toggle
+            display_hr = res['hedge_ratio_reale'] if is_real_ratio else res['hedge_ratio_commerciale']
+            
             st.markdown(f"""
             <table class="excel-table">
                 <tr><td class="excel-label">N. Turbo Short</td><td class="excel-value">{res['n_turbo']:,.2f}</td><td rowspan="2" style="background-color:#E3F2FD; font-weight:bold; text-align:center;">COPERTURA<br>REALE</td></tr>
                 <tr><td class="excel-label">Capitale + Costi</td><td class="excel-value">{res['capitale']:,.2f} €</td></tr>
-                <tr><td colspan="2" style="text-align:right; font-weight:bold;">Hedge Ratio:</td><td style="background-color:#E3F2FD; text-align:center; font-weight:bold;">{(res['hedge_ratio_reale']*100):.1f}%</td></tr>
+                <tr><td colspan="2" style="text-align:right; font-weight:bold;">Hedge Ratio:</td><td style="background-color:#E3F2FD; text-align:center; font-weight:bold;">{(display_hr*100):.1f}%</td></tr>
             </table>
             """, unsafe_allow_html=True)
             perf = res['percentuale']*100
@@ -180,7 +208,7 @@ with tab1:
 
         # --- SEZIONE COMMENTI ---
         st.markdown("### 📝 Analisi")
-        h_ratio = res['hedge_ratio_reale'] * 100
+        h_ratio = display_hr * 100
         if h_ratio > 98:
             st.success(f"**Copertura Ottimale:** Il sistema ha neutralizzato il {h_ratio:.1f}% del rischio. La performance netta riflette l'efficacia della protezione al netto dei costi di transazione.")
         elif h_ratio > 80:
@@ -200,8 +228,13 @@ with tab1:
             row = []
             for v in var_list:
                 s = params.valore_iniziale * (1 + v)
-                if s >= res['barriera']: row.append(0.0)
-                else: row.append(max(0, (params.strike-s)/params.cambio*params.multiplo) + max(0, res['premio']-(res['premio']/(params.giorni or 1)*t)))
+                if s >= res['barriera']: 
+                    row.append(0.0)
+                else: 
+                    # FIX MATEMATICO: Matrice basata sullo strike e con decadimento appropriato
+                    intrinsic = max(0, (params.strike - s) / params.cambio * params.multiplo)
+                    decay = res['premio'] * (t / max(1, params.giorni))
+                    row.append(intrinsic + max(0, res['premio'] - decay))
             matrix.append(row)
         df_sens = pd.DataFrame(matrix, columns=[f"{v*100:+.0f}%" for v in var_list], index=[f"T+{t}gg" for t in t_steps])
         st.dataframe(df_sens.style.format("{:.3f}€").background_gradient(cmap='RdYlGn', axis=None, vmin=0.0), use_container_width=True)
@@ -212,12 +245,12 @@ with tab1:
         st.plotly_chart(plot_pl_waterfall(res), use_container_width=True)
 
 # ======================================================================
-# TAB 2: BACKTEST STORICO (CON INSERIMENTO MULTIPLO E DATE)
+# TAB 2: BACKTEST STORICO 
 # ======================================================================
 with tab2:
     st.markdown("### 🕰️ Analisi Storica e Report")
     if 'barriera_calcolata' not in st.session_state: 
-        st.warning("Esegui il Tab 1.")
+        st.warning("Esegui il Tab 1 per calcolare la barriera.")
     else:
         with st.expander("Parametri Backtest", expanded=True):
             b1, b2, b3, b4, b5 = st.columns(5)
@@ -234,10 +267,14 @@ with tab2:
                 df_bt, msg, diag = run_historical_backtest(current_ticker, t_idx, t_fx, start_date, end_date, st.session_state['barriera_calcolata'])
                 
                 if df_bt is not None:
-                    bg = diag.get('bg_color', '#f8f9fa')
-                    tc = diag.get('color', '#1A365D')
+                    # FIX: Traduzione codici colore semantici in esadecimali
+                    color_status = diag.get('color', 'info')
+                    if color_status == 'error': bg, tc = '#FFEBEE', '#C62828'
+                    elif color_status == 'warning': bg, tc = '#FFF3E0', '#E65100'
+                    else: bg, tc = '#E8F5E9', '#2E7D32'
+
                     st.markdown(f"""<div style="background-color: {bg}; border-left: 5px solid {tc}; padding: 15px; border-radius: 5px; margin-bottom: 15px;">
-                        <h3 style="color: {tc}; margin-top:0;">{diag['title']}</h3><p>{diag['body']}</p><b>Azione: {diag['action']}</b></div>""", unsafe_allow_html=True)
+                        <h3 style="color: {tc}; margin-top:0;">{diag['title']}</h3><p style="color: #1A365D;">{diag['body']}</p><b style="color: #1A365D;">Azione: {diag['action']}</b></div>""", unsafe_allow_html=True)
                     
                     st.line_chart(df_bt.set_index('Date')[['Ptf_Close']])
                     
@@ -248,7 +285,7 @@ with tab2:
                 st.divider()
 
 # ======================================================================
-# TAB 3: DATABASE LIVE (CON FILTRO LEVA)
+# TAB 3: DATABASE LIVE 
 # ======================================================================
 with tab3:
     st.markdown("### 🔍 Live Terminal BNP Paribas")
@@ -291,7 +328,7 @@ with tab4:
         submit_adv = st.form_submit_button("🔍 Cerca Certificati Ottimali")
         
     if submit_adv:
-        l_target = (v_p * v_b) / v_bud
+        l_target = (v_p * v_b) / max(1.0, v_bud)
         st.markdown("#### 2️⃣ Risultato Ottimizzazione")
         st.metric(label="🎯 Leva Target Calcolata", value=f"{l_target:.2f}x", help="Rapporto matematico necessario tra capitale da proteggere e budget allocato.")
         
