@@ -2,7 +2,7 @@ import pandas as pd
 import copy
 from calculator import TurboParameters, DeterministicTurboCalculator
 
-def run_stress_test(base_params: TurboParameters) -> pd.DataFrame:
+def run_stress_test(base_params: TurboParameters, n_turbo_custom: float = None) -> pd.DataFrame:
     # Scenari con Slippage Dinamico (Var. Indice, Slippage Pct Aggiuntivo)
     scenarios = [
         ("Correzione Normale", -0.10, 0.01), # 1% extra spread
@@ -28,10 +28,33 @@ def run_stress_test(base_params: TurboParameters) -> pd.DataFrame:
         
         res = DeterministicTurboCalculator(p_scen).calculate_all()
         
+        # --- FIX: Allineamento con l'override manuale di app.py ---
+        if n_turbo_custom is not None:
+            res['n_turbo'] = float(n_turbo_custom)
+            costo_unitario_acquisto = p_scen.prezzo_iniziale * (1 + p_scen.bid_ask_spread/2 + p_scen.commissioni_pct)
+            valore_unitario_vendita = res['prezzo_futuro'] * (1 - (p_scen.bid_ask_spread/2 + p_scen.commissioni_pct + slippage))
+            
+            res['capitale'] = p_scen.portafoglio + (res['n_turbo'] * costo_unitario_acquisto)
+            res['valore_copertura_simulata'] = res['n_turbo'] * valore_unitario_vendita
+            
+            perdita_ptf = p_scen.portafoglio - res['valore_ptf_simulato']
+            if perdita_ptf > 0:
+                gain_netto = res['valore_copertura_simulata'] - (res['n_turbo'] * costo_unitario_acquisto)
+                res['hedge_ratio_reale'] = gain_netto / perdita_ptf
+            else:
+                res['hedge_ratio_reale'] = 0.0
+
         is_ko = spot_scenario >= barriera
+        
+        # Ricalcolo coerente del P&L Netto del Turbo
+        costo_reale_investito = res['n_turbo'] * p_scen.prezzo_iniziale * (1 + p_scen.bid_ask_spread/2 + p_scen.commissioni_pct)
+        
         if is_ko:
-            res['pl_turbo_netto'] = -res['capitale'] 
+            # Se va in KO, la perdita è esattamente il capitale investito nel derivato
+            res['pl_turbo_netto'] = -costo_reale_investito 
             res['hedge_ratio_reale'] = 0.0
+        else:
+            res['pl_turbo_netto'] = res['valore_copertura_simulata'] - costo_reale_investito
             
         pl_netto = res['pl_portafoglio'] + res['pl_turbo_netto']
         
