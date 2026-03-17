@@ -32,7 +32,7 @@ st.markdown("""
     [data-testid="stSidebar"] { background-color: #1A365D !important; }
     [data-testid="stSidebarNav"] span, [data-testid="stSidebarNav"] div { color: #FFFFFF !important; font-weight: 600; }
     
-    /* MODIFICA: Pulsante Bordeaux */
+    /* Pulsante Bordeaux */
     div[data-testid="stFormSubmitButton"] button, .action-btn { background-color: #800020 !important; color: #FFFFFF !important; border: none !important; font-weight: bold !important; padding: 10px 24px !important; border-radius: 6px !important; }
     div[data-testid="stFormSubmitButton"] button:hover, .action-btn:hover { background-color: #5c0017 !important; color: #FFFFFF !important; }
 </style>
@@ -89,25 +89,23 @@ def fetch_live_certificates():
         return pd.DataFrame()
 
 # --- SIDEBAR ---
-# MODIFICA: Scritta forzata in bianco
 st.sidebar.markdown("<h2 style='color: white;'>📉 Attriti di Mercato</h2>", unsafe_allow_html=True)
 ui_spread = st.sidebar.number_input("Bid-Ask Spread (%)", value=0.5, step=0.1) / 100
 ui_comm = st.sidebar.number_input("Commissioni (%)", value=0.1, step=0.05) / 100
 ui_div = st.sidebar.number_input("Dividend Yield (%)", value=1.5, step=0.1) / 100
 
-st.title("🏦 Dashboard Copertura Istituzionale (v6.1)")
+st.title("🏦 Dashboard Copertura Istituzionale (v6.2)")
 is_real_ratio = st.toggle("🛡️ **Hedge Ratio Netto (Risk Manager)**", value=True)
 
 tab1, tab2, tab3, tab4 = st.tabs(["🎯 Setup & Matrice", "📈 Backtest Storico", "🔍 Database Live", "🤖 Advisor Strategico"])
 
 # ======================================================================
-# TAB 1: SETUP & RISULTATI (EXCEL STYLE + COMMENTI)
+# TAB 1: SETUP & RISULTATI 
 # ======================================================================
 with tab1:
     with st.form("input_form"):
         col1, col2, col3 = st.columns(3)
         with col1:
-            # MODIFICA: Titolo aggiornato
             st.markdown("### ⚙️ Caratteristiche Turbo SHORT")
             cert = st.session_state.get('selected_cert')
             if cert: st.info(f"ISIN: {cert['isin']}")
@@ -117,7 +115,6 @@ with tab1:
             multiplo = st.number_input("Multiplo", value=cert['multiplo'] if cert else 0.01, format="%.4f")
             euribor = st.number_input("Euribor 12M", value=0.02456, format="%.5f")
         with col2:
-            # MODIFICA: Titolo aggiornato
             st.markdown("### 📉 indice da coprire")
             v_iniziale = st.number_input("Spot", value=6670.75, step=0.01)
             v_ipotetico = st.number_input("Target", value=6000.0, step=0.01)
@@ -129,7 +126,6 @@ with tab1:
         st.divider()
         tipo_c = st.radio("Ottimizzazione", ["Auto", "Manuale"], horizontal=True)
         n_custom = st.number_input("Qtà", value=1000, step=10) if tipo_c == "Manuale" else None
-        # MODIFICA: Scritta pulsante
         if st.form_submit_button("🔥 Calcola"):
             params = TurboParameters(p_iniziale, strike, cambio, multiplo, euribor, v_iniziale, v_ipotetico, giorni, ptf, beta, ui_div, ui_spread, ui_comm)
             res = DeterministicTurboCalculator(params).calculate_all()
@@ -183,7 +179,6 @@ with tab1:
             st.markdown(f"<div style='background-color:{'#E8F5E9' if perf>=0 else '#FFEBEE'}; text-align:center; padding:15px; border:2px solid {'#2E7D32' if perf>=0 else '#C62828'};'><h3>{perf:+.2f}% Perf. Netta</h3></div>", unsafe_allow_html=True)
 
         # --- SEZIONE COMMENTI ---
-        # MODIFICA: Titolo aggiornato
         st.markdown("### 📝 Analisi")
         h_ratio = res['hedge_ratio_reale'] * 100
         if h_ratio > 98:
@@ -196,9 +191,7 @@ with tab1:
         if perf < -1:
              st.info(f"**Nota sui Costi:** Il trascinamento negativo del {perf:.2f}% è dovuto principalmente al Bid-Ask spread e alle commissioni. In scenari di bassa volatilità, questo rappresenta il 'premio assicurativo' pagato al mercato.")
 
-        # Matrice Sensibilità
         st.divider()
-        # MODIFICA: Titolo aggiornato
         st.markdown("### 🌡️ Matrice di Sensibilità")
         var_list = [-0.2, -0.1, -0.05, 0, 0.05, 0.1, 0.2]
         t_steps = sorted(list(set([0, int(params.giorni/2), params.giorni])))
@@ -214,13 +207,13 @@ with tab1:
         st.dataframe(df_sens.style.format("{:.3f}€").background_gradient(cmap='RdYlGn', axis=None, vmin=0.0), use_container_width=True)
         
         st.divider()
-        # MODIFICA: Grafici impilati verticalmente (non più su colonne)
+        # Grafici impilati (uno sotto l'altro)
         df_s, b_l = generate_scenario_data(params)
         st.plotly_chart(plot_payoff_profile(df_s, params.valore_iniziale, b_l), use_container_width=True)
         st.plotly_chart(plot_pl_waterfall(res), use_container_width=True)
 
 # ======================================================================
-# TAB 2: BACKTEST
+# TAB 2: BACKTEST (CON INSERIMENTO MULTIPLO)
 # ======================================================================
 with tab2:
     st.markdown("### 🕰️ Analisi Storica e Report")
@@ -228,35 +221,48 @@ with tab2:
     else:
         with st.expander("Parametri Backtest", expanded=True):
             b1, b2, b3 = st.columns(3)
-            t_ptf = b1.text_input("Ticker Ptf", "SPY")
+            t_ptf_input = b1.text_input("Ticker Ptf (separati da virgola per inserimento multiplo)", "SPY")
             t_idx = b2.text_input("Ticker Indice", "^GSPC")
             t_fx = b3.text_input("FX (es. EURUSD=X)", "")
         if st.button("🚀 Avvia Backtest"):
-            df_bt, msg, diag = run_historical_backtest(t_ptf, t_idx, t_fx, datetime.date(2023,1,1), datetime.date.today(), st.session_state['barriera_calcolata'])
-            if df_bt is not None:
-                bg = diag.get('bg_color', '#f8f9fa')
-                tc = diag.get('color', '#1A365D')
-                st.markdown(f"""<div style="background-color: {bg}; border-left: 5px solid {tc}; padding: 15px; border-radius: 5px;">
-                    <h3 style="color: {tc}; margin-top:0;">{diag['title']}</h3><p>{diag['body']}</p><b>Azione: {diag['action']}</b></div>""", unsafe_allow_html=True)
-                st.line_chart(df_bt.set_index('Date')[['Ptf_Close']])
-                pdf = generate_pdf_report(df_bt, t_ptf, t_idx, t_fx, st.session_state['barriera_calcolata'], diag)
-                st.download_button("📄 Scarica Report PDF", data=pdf, file_name=f"Quant_Report_{t_ptf}.pdf")
-            else: st.error(msg)
+            # Supporto Multi-Ticker isolato nel loop
+            tickers = [t.strip() for t in t_ptf_input.split(",") if t.strip()]
+            for current_ticker in tickers:
+                st.markdown(f"#### 🔍 Report per: {current_ticker}")
+                df_bt, msg, diag = run_historical_backtest(current_ticker, t_idx, t_fx, datetime.date(2023,1,1), datetime.date.today(), st.session_state['barriera_calcolata'])
+                if df_bt is not None:
+                    bg = diag.get('bg_color', '#f8f9fa')
+                    tc = diag.get('color', '#1A365D')
+                    st.markdown(f"""<div style="background-color: {bg}; border-left: 5px solid {tc}; padding: 15px; border-radius: 5px;">
+                        <h3 style="color: {tc}; margin-top:0;">{diag['title']}</h3><p>{diag['body']}</p><b>Azione: {diag['action']}</b></div>""", unsafe_allow_html=True)
+                    st.line_chart(df_bt.set_index('Date')[['Ptf_Close']])
+                    pdf = generate_pdf_report(df_bt, current_ticker, t_idx, t_fx, st.session_state['barriera_calcolata'], diag)
+                    st.download_button(f"📄 Scarica Report PDF per {current_ticker}", data=pdf, file_name=f"Quant_Report_{current_ticker}.pdf")
+                else: 
+                    st.error(f"Errore su {current_ticker}: {msg}")
+                st.divider()
 
 # ======================================================================
-# TAB 3: DATABASE LIVE
+# TAB 3: DATABASE LIVE (CON FILTRO LEVA)
 # ======================================================================
 with tab3:
     st.markdown("### 🔍 Live Terminal BNP Paribas")
     df_raw = fetch_live_certificates()
     if df_raw.empty: st.error("Nessun dato.")
     else:
-        c1, c2 = st.columns(2)
+        c1, c2, c3, c4 = st.columns(4)
         scelta_s = c1.selectbox("Sottostante", ["Tutti"] + sorted([str(x) for x in df_raw['Sottostante'].unique()]))
         scelta_c = c2.selectbox("Classe", ["Tutte"] + sorted([str(x) for x in df_raw['Classe'].unique()]))
+        min_leva = c3.number_input("Leva Minima", value=1.0, step=1.0)
+        max_leva = c4.number_input("Leva Massima", value=100.0, step=1.0)
+        
         df_f = df_raw.copy()
         if scelta_s != "Tutti": df_f = df_f[df_f['Sottostante'] == scelta_s]
         if scelta_c != "Tutte": df_f = df_f[df_f['Classe'] == scelta_c]
+        
+        # Filtro Leva
+        df_f = df_f[(df_f['Leva'] >= min_leva) & (df_f['Leva'] <= max_leva)]
+        
         sel = st.dataframe(df_f, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row")
         if len(sel.selection.rows) > 0:
             row = df_f.iloc[sel.selection.rows[0]]
@@ -264,27 +270,37 @@ with tab3:
             st.success(f"✅ ISIN {row['ISIN']} caricato."); st.button("Aggiorna ora")
 
 # ======================================================================
-# TAB 4: ADVISOR
+# TAB 4: ADVISOR (FUNZIONALITÀ E CHIAREZZA MIGLIORATE)
 # ======================================================================
 with tab4:
     st.markdown("### 🤖 Advisor Strategico: Match Portafoglio")
+    st.markdown("Imposta i vincoli di capitale e di budget per estrarre dal mercato i certificati matematicamente ottimali.")
+    
+    st.markdown("#### 1️⃣ Definisci i Parametri di Hedging")
     with st.form("adv_form"):
-        c1, c2 = st.columns(2)
-        v_p = c1.number_input("Valore Portafoglio (€)", value=200000)
-        v_b = c1.number_input("Beta", value=1.0)
-        v_bud = c2.number_input("Budget Copertura (€)", value=5000)
-        v_dist = c2.slider("Distanza Barriera Minima (%)", 2, 30, 10)
-        if st.form_submit_button("🔍 Scouting ISIN Compatibili"):
-            l_target = (v_p * v_b) / v_bud
-            st.info(f"💡 Per questo setup ti serve un certificato con **Leva {l_target:.1f}**")
-            df_l = fetch_live_certificates()
-            if not df_l.empty:
-                col_d = 'Distanza Barriera %' if 'Distanza Barriera %' in df_l.columns else None
-                df_res = df_l.copy()
-                if col_d: df_res = df_res[df_res[col_d] >= v_dist]
-                df_res['Diff_Leva'] = (df_res['Leva'] - l_target).abs()
-                matches = df_res.sort_values('Diff_Leva').head(5)
-                if matches.empty: st.warning("Nessun match trovato.")
-                else:
-                    st.dataframe(matches[['Sottostante', 'ISIN', 'Leva', 'Distanza Barriera %', 'Strike', 'Lettera']], use_container_width=True)
-                    st.info("👆 Seleziona l'ISIN desiderato nel Tab 3 per caricarlo nel Setup.")
+        c1, c2, c3, c4 = st.columns(4)
+        v_p = c1.number_input("Valore Portafoglio (€)", value=200000.0, step=1000.0)
+        v_b = c2.number_input("Beta", value=1.0, step=0.1)
+        v_bud = c3.number_input("Budget Copertura (€)", value=5000.0, step=500.0)
+        v_dist = c4.number_input("Distanza Barriera Min (%)", value=10.0, step=1.0)
+        submit_adv = st.form_submit_button("🔍 Cerca Certificati Ottimali")
+        
+    if submit_adv:
+        l_target = (v_p * v_b) / v_bud
+        st.markdown("#### 2️⃣ Risultato Ottimizzazione")
+        st.metric(label="🎯 Leva Target Calcolata", value=f"{l_target:.2f}x", help="Rapporto matematico necessario tra capitale da proteggere e budget allocato.")
+        
+        df_l = fetch_live_certificates()
+        if not df_l.empty:
+            col_d = 'Distanza Barriera %' if 'Distanza Barriera %' in df_l.columns else None
+            df_res = df_l.copy()
+            if col_d: df_res = df_res[df_res[col_d] >= v_dist]
+            df_res['Diff_Leva'] = (df_res['Leva'] - l_target).abs()
+            matches = df_res.sort_values('Diff_Leva').head(10)
+            
+            if matches.empty: 
+                st.warning("Nessun certificato sul mercato rispetta questi parametri. Prova a incrementare il budget o ridurre la distanza dalla barriera.")
+            else:
+                st.markdown("##### 🏆 Migliori Soluzioni di Mercato (Ordinati per vicinanza alla Leva Target)")
+                st.dataframe(matches[['Sottostante', 'ISIN', 'Leva', 'Distanza Barriera %', 'Strike', 'Lettera']], use_container_width=True)
+                st.info("👆 Copia l'ISIN desiderato o vai nella tab 'Database Live' per caricarlo nel motore di Setup.")
