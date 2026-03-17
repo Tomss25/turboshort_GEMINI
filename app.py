@@ -94,7 +94,7 @@ ui_spread = st.sidebar.number_input("Bid-Ask Spread (%)", value=0.5, step=0.1) /
 ui_comm = st.sidebar.number_input("Commissioni (%)", value=0.1, step=0.05) / 100
 ui_div = st.sidebar.number_input("Dividend Yield (%)", value=1.5, step=0.1) / 100
 
-st.title("🏦 Dashboard Copertura Istituzionale (v6.2)")
+st.title("🏦 Dashboard Copertura Istituzionale (v6.3)")
 is_real_ratio = st.toggle("🛡️ **Hedge Ratio Netto (Risk Manager)**", value=True)
 
 tab1, tab2, tab3, tab4 = st.tabs(["🎯 Setup & Matrice", "📈 Backtest Storico", "🔍 Database Live", "🤖 Advisor Strategico"])
@@ -207,37 +207,42 @@ with tab1:
         st.dataframe(df_sens.style.format("{:.3f}€").background_gradient(cmap='RdYlGn', axis=None, vmin=0.0), use_container_width=True)
         
         st.divider()
-        # Grafici impilati (uno sotto l'altro)
         df_s, b_l = generate_scenario_data(params)
         st.plotly_chart(plot_payoff_profile(df_s, params.valore_iniziale, b_l), use_container_width=True)
         st.plotly_chart(plot_pl_waterfall(res), use_container_width=True)
 
 # ======================================================================
-# TAB 2: BACKTEST (CON INSERIMENTO MULTIPLO)
+# TAB 2: BACKTEST STORICO (CON INSERIMENTO MULTIPLO E DATE)
 # ======================================================================
 with tab2:
     st.markdown("### 🕰️ Analisi Storica e Report")
-    if 'barriera_calcolata' not in st.session_state: st.warning("Esegui il Tab 1.")
+    if 'barriera_calcolata' not in st.session_state: 
+        st.warning("Esegui il Tab 1.")
     else:
         with st.expander("Parametri Backtest", expanded=True):
-            b1, b2, b3 = st.columns(3)
-            t_ptf_input = b1.text_input("Ticker Ptf (separati da virgola per inserimento multiplo)", "SPY")
+            b1, b2, b3, b4, b5 = st.columns(5)
+            t_ptf_input = b1.text_input("Ticker Ptf (separati da virgola per multi-asset)", "SPY")
             t_idx = b2.text_input("Ticker Indice", "^GSPC")
             t_fx = b3.text_input("FX (es. EURUSD=X)", "")
+            start_date = b4.date_input("Data Inizio", value=datetime.date(2023, 1, 1))
+            end_date = b5.date_input("Data Fine", value=datetime.date.today())
+            
         if st.button("🚀 Avvia Backtest"):
-            # Supporto Multi-Ticker isolato nel loop
             tickers = [t.strip() for t in t_ptf_input.split(",") if t.strip()]
-            for current_ticker in tickers:
-                st.markdown(f"#### 🔍 Report per: {current_ticker}")
-                df_bt, msg, diag = run_historical_backtest(current_ticker, t_idx, t_fx, datetime.date(2023,1,1), datetime.date.today(), st.session_state['barriera_calcolata'])
+            for idx, current_ticker in enumerate(tickers):
+                st.markdown(f"#### 🔍 Analisi per: **{current_ticker}**")
+                df_bt, msg, diag = run_historical_backtest(current_ticker, t_idx, t_fx, start_date, end_date, st.session_state['barriera_calcolata'])
+                
                 if df_bt is not None:
                     bg = diag.get('bg_color', '#f8f9fa')
                     tc = diag.get('color', '#1A365D')
-                    st.markdown(f"""<div style="background-color: {bg}; border-left: 5px solid {tc}; padding: 15px; border-radius: 5px;">
+                    st.markdown(f"""<div style="background-color: {bg}; border-left: 5px solid {tc}; padding: 15px; border-radius: 5px; margin-bottom: 15px;">
                         <h3 style="color: {tc}; margin-top:0;">{diag['title']}</h3><p>{diag['body']}</p><b>Azione: {diag['action']}</b></div>""", unsafe_allow_html=True)
+                    
                     st.line_chart(df_bt.set_index('Date')[['Ptf_Close']])
+                    
                     pdf = generate_pdf_report(df_bt, current_ticker, t_idx, t_fx, st.session_state['barriera_calcolata'], diag)
-                    st.download_button(f"📄 Scarica Report PDF per {current_ticker}", data=pdf, file_name=f"Quant_Report_{current_ticker}.pdf")
+                    st.download_button(f"📄 Scarica Report PDF ({current_ticker})", data=pdf, file_name=f"Quant_Report_{current_ticker}.pdf", key=f"pdf_dl_{current_ticker}_{idx}")
                 else: 
                     st.error(f"Errore su {current_ticker}: {msg}")
                 st.divider()
@@ -248,7 +253,8 @@ with tab2:
 with tab3:
     st.markdown("### 🔍 Live Terminal BNP Paribas")
     df_raw = fetch_live_certificates()
-    if df_raw.empty: st.error("Nessun dato.")
+    if df_raw.empty: 
+        st.error("Nessun dato.")
     else:
         c1, c2, c3, c4 = st.columns(4)
         scelta_s = c1.selectbox("Sottostante", ["Tutti"] + sorted([str(x) for x in df_raw['Sottostante'].unique()]))
@@ -260,7 +266,6 @@ with tab3:
         if scelta_s != "Tutti": df_f = df_f[df_f['Sottostante'] == scelta_s]
         if scelta_c != "Tutte": df_f = df_f[df_f['Classe'] == scelta_c]
         
-        # Filtro Leva
         df_f = df_f[(df_f['Leva'] >= min_leva) & (df_f['Leva'] <= max_leva)]
         
         sel = st.dataframe(df_f, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row")
@@ -270,7 +275,7 @@ with tab3:
             st.success(f"✅ ISIN {row['ISIN']} caricato."); st.button("Aggiorna ora")
 
 # ======================================================================
-# TAB 4: ADVISOR (FUNZIONALITÀ E CHIAREZZA MIGLIORATE)
+# TAB 4: ADVISOR 
 # ======================================================================
 with tab4:
     st.markdown("### 🤖 Advisor Strategico: Match Portafoglio")
