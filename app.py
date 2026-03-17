@@ -31,6 +31,10 @@ st.markdown("""
     .excel-value { text-align: right; font-weight: bold; color: #1A365D; }
     [data-testid="stSidebar"] { background-color: #1A365D !important; }
     [data-testid="stSidebarNav"] span, [data-testid="stSidebarNav"] div { color: #FFFFFF !important; font-weight: 600; }
+    
+    /* MODIFICA: Pulsante Bordeaux */
+    div[data-testid="stFormSubmitButton"] button, .action-btn { background-color: #800020 !important; color: #FFFFFF !important; border: none !important; font-weight: bold !important; padding: 10px 24px !important; border-radius: 6px !important; }
+    div[data-testid="stFormSubmitButton"] button:hover, .action-btn:hover { background-color: #5c0017 !important; color: #FFFFFF !important; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -85,7 +89,8 @@ def fetch_live_certificates():
         return pd.DataFrame()
 
 # --- SIDEBAR ---
-st.sidebar.header("📉 Attriti di Mercato")
+# MODIFICA: Scritta forzata in bianco
+st.sidebar.markdown("<h2 style='color: white;'>📉 Attriti di Mercato</h2>", unsafe_allow_html=True)
 ui_spread = st.sidebar.number_input("Bid-Ask Spread (%)", value=0.5, step=0.1) / 100
 ui_comm = st.sidebar.number_input("Commissioni (%)", value=0.1, step=0.05) / 100
 ui_div = st.sidebar.number_input("Dividend Yield (%)", value=1.5, step=0.1) / 100
@@ -102,7 +107,8 @@ with tab1:
     with st.form("input_form"):
         col1, col2, col3 = st.columns(3)
         with col1:
-            st.markdown("### ⚙️ Derivato")
+            # MODIFICA: Titolo aggiornato
+            st.markdown("### ⚙️ Caratteristiche Turbo SHORT")
             cert = st.session_state.get('selected_cert')
             if cert: st.info(f"ISIN: {cert['isin']}")
             p_iniziale = st.number_input("Prezzo Lettera (€)", value=cert['prezzo'] if cert else 7.64, step=0.01)
@@ -111,7 +117,8 @@ with tab1:
             multiplo = st.number_input("Multiplo", value=cert['multiplo'] if cert else 0.01, format="%.4f")
             euribor = st.number_input("Euribor 12M", value=0.02456, format="%.5f")
         with col2:
-            st.markdown("### 📉 Mercato")
+            # MODIFICA: Titolo aggiornato
+            st.markdown("### 📉 indice da coprire")
             v_iniziale = st.number_input("Spot", value=6670.75, step=0.01)
             v_ipotetico = st.number_input("Target", value=6000.0, step=0.01)
             giorni = st.number_input("Giorni Hedging", value=60, step=1)
@@ -122,6 +129,7 @@ with tab1:
         st.divider()
         tipo_c = st.radio("Ottimizzazione", ["Auto", "Manuale"], horizontal=True)
         n_custom = st.number_input("Qtà", value=1000, step=10) if tipo_c == "Manuale" else None
+        # MODIFICA: Scritta pulsante
         if st.form_submit_button("🔥 Calcola"):
             params = TurboParameters(p_iniziale, strike, cambio, multiplo, euribor, v_iniziale, v_ipotetico, giorni, ptf, beta, ui_div, ui_spread, ui_comm)
             res = DeterministicTurboCalculator(params).calculate_all()
@@ -174,8 +182,9 @@ with tab1:
             perf = res['percentuale']*100
             st.markdown(f"<div style='background-color:{'#E8F5E9' if perf>=0 else '#FFEBEE'}; text-align:center; padding:15px; border:2px solid {'#2E7D32' if perf>=0 else '#C62828'};'><h3>{perf:+.2f}% Perf. Netta</h3></div>", unsafe_allow_html=True)
 
-        # --- SEZIONE COMMENTI SUI RISULTATI ---
-        st.markdown("### 📝 Analisi del Risk Manager")
+        # --- SEZIONE COMMENTI ---
+        # MODIFICA: Titolo aggiornato
+        st.markdown("### 📝 Analisi")
         h_ratio = res['hedge_ratio_reale'] * 100
         if h_ratio > 98:
             st.success(f"**Copertura Ottimale:** Il sistema ha neutralizzato il {h_ratio:.1f}% del rischio. La performance netta riflette l'efficacia della protezione al netto dei costi di transazione.")
@@ -187,9 +196,10 @@ with tab1:
         if perf < -1:
              st.info(f"**Nota sui Costi:** Il trascinamento negativo del {perf:.2f}% è dovuto principalmente al Bid-Ask spread e alle commissioni. In scenari di bassa volatilità, questo rappresenta il 'premio assicurativo' pagato al mercato.")
 
-        # Matrice Sensitività
+        # Matrice Sensibilità
         st.divider()
-        st.markdown("### 🌡️ Matrice di Sensitività")
+        # MODIFICA: Titolo aggiornato
+        st.markdown("### 🌡️ Matrice di Sensibilità")
         var_list = [-0.2, -0.1, -0.05, 0, 0.05, 0.1, 0.2]
         t_steps = sorted(list(set([0, int(params.giorni/2), params.giorni])))
         matrix = []
@@ -204,11 +214,10 @@ with tab1:
         st.dataframe(df_sens.style.format("{:.3f}€").background_gradient(cmap='RdYlGn', axis=None, vmin=0.0), use_container_width=True)
         
         st.divider()
-        g1, g2 = st.columns(2)
-        with g1:
-            df_s, b_l = generate_scenario_data(params)
-            st.plotly_chart(plot_payoff_profile(df_s, params.valore_iniziale, b_l), use_container_width=True)
-        with g2: st.plotly_chart(plot_pl_waterfall(res), use_container_width=True)
+        # MODIFICA: Grafici impilati verticalmente (non più su colonne)
+        df_s, b_l = generate_scenario_data(params)
+        st.plotly_chart(plot_payoff_profile(df_s, params.valore_iniziale, b_l), use_container_width=True)
+        st.plotly_chart(plot_pl_waterfall(res), use_container_width=True)
 
 # ======================================================================
 # TAB 2: BACKTEST
